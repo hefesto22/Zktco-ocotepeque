@@ -39,6 +39,13 @@ LOCKOUT_DURATION_MINUTES: int = 15
 # Expiración de sesión por inactividad (en minutos). 0 = nunca.
 SESSION_TIMEOUT_MINUTES: int = 30
 
+# ── Política de contraseñas ───────────────────────────────────────────────────
+# Se aplica al crear el primer SUPERADMIN (Setup Wizard) y, más adelante, a
+# cualquier otro flujo de creación o cambio de password.
+MIN_PASSWORD_LENGTH: int = 8
+PASSWORD_REQUIRE_DIGIT: bool = True
+PASSWORD_REQUIRE_LETTER: bool = True
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Nivel por defecto. En prod se baja a INFO o WARNING vía config en BD.
 LOG_LEVEL: str = "DEBUG"

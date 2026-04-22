@@ -69,3 +69,54 @@ class NotAuthenticatedError(Exception):
 
     def __init__(self) -> None:
         super().__init__("Debe iniciar sesión para continuar.")
+
+
+# ── Errores del Setup Wizard ──────────────────────────────────────────────────
+
+
+class SetupError(Exception):
+    """Clase base para errores del Setup Wizard."""
+
+
+class SetupAlreadyCompletedError(SetupError):
+    """Se intentó ejecutar el wizard cuando ya existe un SUPERADMIN.
+
+    El wizard queda deshabilitado de forma derivada: mientras
+    ``count(SUPERADMIN) > 0``, cualquier intento de ``create_superadmin``
+    lanza este error. No hay bandera persistida que un atacante pueda
+    manipular — la única fuente de verdad es el conteo de usuarios.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "El sistema ya tiene un SUPERADMIN configurado. "
+            "El asistente de configuración ya no está disponible."
+        )
+
+
+class WeakPasswordError(SetupError):
+    """La password no cumple la política mínima del proyecto.
+
+    Attributes:
+        reason: Descripción en español de qué regla no se cumplió.
+            Es seguro mostrarla al usuario — el wizard es un flujo
+            local, no expuesto por red, así que no aplican
+            consideraciones de enumeración.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class DuplicateUsernameError(SetupError):
+    """El username ya existe en la tabla ``usuarios``.
+
+    Attributes:
+        username: El nombre que colisionó. Se expone porque el caller
+            (CLI local) ya conoce el valor — lo acaba de tipear.
+    """
+
+    def __init__(self, username: str) -> None:
+        super().__init__(f"El usuario '{username}' ya existe.")
+        self.username = username
