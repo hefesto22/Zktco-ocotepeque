@@ -27,3 +27,9 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["zk", "zk.*", "customtkinter", "customtkinter.*"]
 ignore_missing_imports = true
+
+# Las vistas subclass CTkFrame; sin stubs ``CTkFrame`` es ``Any`` y mypy
+# --strict bloquea el subclassing. Acotamos la excepción SOLO a ui.views.
+[[tool.mypy.overrides]]
+module = ["ui.views.*"]
+disallow_subclassing_any = false

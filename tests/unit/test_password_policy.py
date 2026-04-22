@@ -11,7 +11,6 @@ import pytest
 from core.services.errors import WeakPasswordError
 from core.services.password_policy import PasswordPolicy
 
-
 # ── Validación del constructor ────────────────────────────────────────────────
 
 

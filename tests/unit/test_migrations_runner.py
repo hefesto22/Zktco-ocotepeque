@@ -15,7 +15,6 @@ import pytest
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
