@@ -201,6 +201,58 @@ def test_list_by_turno_trae_asignaciones_del_turno(
     assert por_b[0].fecha_fin is None
 
 
+# ── cerrar_vigente ────────────────────────────────────────────────────────────
+
+
+def test_cerrar_vigente_cierra_sin_abrir_nueva(
+    setup: Tuple[EmpleadoTurnoRepositorySQLite, int, int, int],
+) -> None:
+    repo, emp_id, turno_a, _ = setup
+    original = repo.asignar(emp_id, turno_a, "2026-01-01")
+    assert original.id is not None
+    repo.cerrar_vigente(emp_id, "2026-03-31")
+    # Ya no hay vigente.
+    assert repo.get_vigente(emp_id) is None
+    # Pero la fila original sigue en el historial con fecha_fin seteada.
+    historial = repo.list_historial(emp_id)
+    assert len(historial) == 1
+    assert historial[0].id == original.id
+    assert historial[0].fecha_fin == "2026-03-31"
+
+
+def test_cerrar_vigente_solo_sin_vigente_levanta_value_error(
+    setup: Tuple[EmpleadoTurnoRepositorySQLite, int, int, int],
+) -> None:
+    repo, emp_id, _, _ = setup
+    with pytest.raises(ValueError, match="no tiene asignación vigente"):
+        repo.cerrar_vigente(emp_id, "2026-03-31")
+
+
+def test_cerrar_vigente_con_fecha_menor_al_inicio_falla(
+    setup: Tuple[EmpleadoTurnoRepositorySQLite, int, int, int],
+) -> None:
+    """CHECK ``fecha_fin >= fecha_inicio`` en la fila rechaza la operación."""
+    repo, emp_id, turno_a, _ = setup
+    repo.asignar(emp_id, turno_a, "2026-03-01")
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.cerrar_vigente(emp_id, "2026-02-15")
+    # La vigente quedó intacta.
+    vigente = repo.get_vigente(emp_id)
+    assert vigente is not None
+    assert vigente.fecha_fin is None
+
+
+def test_cerrar_vigente_idempotencia_segunda_llamada_falla(
+    setup: Tuple[EmpleadoTurnoRepositorySQLite, int, int, int],
+) -> None:
+    """Llamar dos veces seguidas: la segunda falla (ya no hay vigente)."""
+    repo, emp_id, turno_a, _ = setup
+    repo.asignar(emp_id, turno_a, "2026-01-01")
+    repo.cerrar_vigente(emp_id, "2026-03-31")
+    with pytest.raises(ValueError, match="no tiene asignación vigente"):
+        repo.cerrar_vigente(emp_id, "2026-04-30")
+
+
 # ── cerrar_vigente_y_asignar ──────────────────────────────────────────────────
 
 

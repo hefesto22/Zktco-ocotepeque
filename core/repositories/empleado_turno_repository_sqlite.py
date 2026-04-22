@@ -91,6 +91,23 @@ class EmpleadoTurnoRepositorySQLite(IEmpleadoTurnoReadRepository, IEmpleadoTurno
             fecha_fin=None,
         )
 
+    def cerrar_vigente(self, empleado_id: int, fecha_fin: str) -> None:
+        # Un solo UPDATE con rowcount check. Si el empleado no tiene
+        # vigente, rowcount == 0 → ValueError (semántica consistente con
+        # cerrar_vigente_y_asignar). Si el CHECK de fechas de la tabla
+        # falla (fecha_fin < fecha_inicio), SQLite levanta IntegrityError
+        # y se propaga sin masking.
+        with self._db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE empleado_turnos SET fecha_fin = ? "
+                "WHERE empleado_id = ? AND fecha_fin IS NULL",
+                (fecha_fin, empleado_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(
+                    f"El empleado {empleado_id} no tiene asignación vigente " "que cerrar."
+                )
+
     def cerrar_vigente_y_asignar(
         self,
         empleado_id: int,

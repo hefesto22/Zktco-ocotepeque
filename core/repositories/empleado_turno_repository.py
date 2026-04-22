@@ -88,6 +88,25 @@ class IEmpleadoTurnoWriteRepository(ABC):
         """
 
     @abstractmethod
+    def cerrar_vigente(self, empleado_id: int, fecha_fin: str) -> None:
+        """Cierra la asignación vigente del empleado sin abrir una nueva.
+
+        Pensado para el flujo de baja: cuando un empleado se desactiva,
+        su asignación vigente debe quedar cerrada con
+        ``fecha_fin = fecha_baja`` — no se le asigna un turno nuevo.
+
+        Args:
+            empleado_id: PK del empleado.
+            fecha_fin: ISO ``YYYY-MM-DD``. Último día efectivo del turno.
+
+        Raises:
+            ValueError: Si el empleado no tiene una asignación vigente
+                (no hay nada que cerrar).
+            sqlite3.IntegrityError: Si el CHECK de fechas falla
+                (``fecha_fin >= fecha_inicio``).
+        """
+
+    @abstractmethod
     def cerrar_vigente_y_asignar(
         self,
         empleado_id: int,
