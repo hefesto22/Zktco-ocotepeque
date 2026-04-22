@@ -31,6 +31,11 @@ BCRYPT_COST_FACTOR: int = 12
 # Bloqueo de cuenta tras N intentos fallidos consecutivos.
 MAX_FAILED_LOGIN_ATTEMPTS: int = 5
 
+# Duración del bloqueo temporal tras MAX_FAILED_LOGIN_ATTEMPTS (en minutos).
+# Política: lockout temporal fijo (Opción B aprobada). Tras este periodo, el
+# siguiente login con password correcta resetea el contador y permite entrar.
+LOCKOUT_DURATION_MINUTES: int = 15
+
 # Expiración de sesión por inactividad (en minutos). 0 = nunca.
 SESSION_TIMEOUT_MINUTES: int = 30
 
