@@ -358,6 +358,29 @@ def test_list_by_empleado_y_rango_vacio(
     assert repo.list_by_empleado_y_rango(emp_id, "2026-04-01", "2026-04-30") == []
 
 
+def test_list_by_empleado_y_rango_respeta_limit(
+    setup: Tuple[AsistenciaRepositorySQLite, int, int, Database],
+) -> None:
+    """Con ``limit=N`` se devuelven solo las primeras N filas tras el ORDER BY."""
+    repo, emp_id, turno_id, _ = setup
+    # Insertamos 5 filas; pedimos las 3 primeras en orden cronológico.
+    for fecha in ("2026-04-05", "2026-04-01", "2026-04-03", "2026-04-04", "2026-04-02"):
+        repo.upsert(_nueva_asistencia(emp_id, turno_id, fecha=fecha))
+    resultado = repo.list_by_empleado_y_rango(emp_id, "2026-04-01", "2026-04-30", limit=3)
+    assert [a.fecha for a in resultado] == ["2026-04-01", "2026-04-02", "2026-04-03"]
+
+
+def test_list_by_empleado_y_rango_limit_none_trae_todos(
+    setup: Tuple[AsistenciaRepositorySQLite, int, int, Database],
+) -> None:
+    """``limit=None`` (default) no corta."""
+    repo, emp_id, turno_id, _ = setup
+    for fecha in ("2026-04-01", "2026-04-02", "2026-04-03"):
+        repo.upsert(_nueva_asistencia(emp_id, turno_id, fecha=fecha))
+    resultado = repo.list_by_empleado_y_rango(emp_id, "2026-04-01", "2026-04-30")
+    assert len(resultado) == 3
+
+
 # ── Tests: list_by_fecha ──────────────────────────────────────────────────────
 
 
@@ -413,6 +436,29 @@ def test_list_by_rango_ordena_por_fecha_y_empleado(
             ("2026-04-16", emp_id_2),
         ]
     )
+    assert tuplas == esperado
+
+
+def test_list_by_rango_respeta_limit(
+    setup: Tuple[AsistenciaRepositorySQLite, int, int, Database],
+) -> None:
+    """``list_by_rango`` corta a N tras ORDER BY fecha, empleado_id."""
+    repo, emp_id_1, turno_id, db = setup
+    depto_seed = DepartamentoRepositorySQLite(db).get_by_nombre("Administración")
+    cargo_seed = CargoRepositorySQLite(db).get_by_nombre("Secretaria")
+    assert depto_seed is not None and cargo_seed is not None
+    assert depto_seed.id is not None and cargo_seed.id is not None
+    emp_id_2 = _seed_segundo_empleado(db, depto_seed.id, cargo_seed.id)
+
+    # 4 filas: (15, emp1), (15, emp2), (16, emp1), (16, emp2).
+    repo.upsert(_nueva_asistencia(emp_id_2, turno_id, fecha="2026-04-16"))
+    repo.upsert(_nueva_asistencia(emp_id_1, turno_id, fecha="2026-04-16"))
+    repo.upsert(_nueva_asistencia(emp_id_2, turno_id, fecha="2026-04-15"))
+    repo.upsert(_nueva_asistencia(emp_id_1, turno_id, fecha="2026-04-15"))
+
+    resultado = repo.list_by_rango("2026-04-15", "2026-04-16", limit=2)
+    tuplas = [(a.fecha, a.empleado_id) for a in resultado]
+    esperado = sorted([("2026-04-15", emp_id_1), ("2026-04-15", emp_id_2)])
     assert tuplas == esperado
 
 

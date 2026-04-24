@@ -62,15 +62,25 @@ class AsistenciaRepositorySQLite(IAsistenciaReadRepository, IAsistenciaWriteRepo
         return _row_to_asistencia(row) if row is not None else None
 
     def list_by_empleado_y_rango(
-        self, empleado_id: int, desde: str, hasta: str
+        self,
+        empleado_id: int,
+        desde: str,
+        hasta: str,
+        limit: Optional[int] = None,
     ) -> List[Asistencia]:
+        # LIMIT como parámetro de SQL (no interpolación) — SQLite acepta
+        # placeholder en LIMIT. Si `limit` es None, se omite la cláusula.
+        sql = (
+            f"SELECT {self._SELECT_COLS} FROM asistencias "
+            "WHERE empleado_id = ? AND fecha >= ? AND fecha <= ? "
+            "ORDER BY fecha ASC"
+        )
+        params: tuple[object, ...] = (empleado_id, desde, hasta)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = params + (limit,)
         with self._db.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT {self._SELECT_COLS} FROM asistencias "
-                "WHERE empleado_id = ? AND fecha >= ? AND fecha <= ? "
-                "ORDER BY fecha ASC",
-                (empleado_id, desde, hasta),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [_row_to_asistencia(r) for r in rows]
 
     def list_by_fecha(self, fecha: str) -> List[Asistencia]:
@@ -82,14 +92,23 @@ class AsistenciaRepositorySQLite(IAsistenciaReadRepository, IAsistenciaWriteRepo
             ).fetchall()
         return [_row_to_asistencia(r) for r in rows]
 
-    def list_by_rango(self, desde: str, hasta: str) -> List[Asistencia]:
+    def list_by_rango(
+        self,
+        desde: str,
+        hasta: str,
+        limit: Optional[int] = None,
+    ) -> List[Asistencia]:
+        sql = (
+            f"SELECT {self._SELECT_COLS} FROM asistencias "
+            "WHERE fecha >= ? AND fecha <= ? "
+            "ORDER BY fecha ASC, empleado_id ASC"
+        )
+        params: tuple[object, ...] = (desde, hasta)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = params + (limit,)
         with self._db.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT {self._SELECT_COLS} FROM asistencias "
-                "WHERE fecha >= ? AND fecha <= ? "
-                "ORDER BY fecha ASC, empleado_id ASC",
-                (desde, hasta),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [_row_to_asistencia(r) for r in rows]
 
     # ── Write ─────────────────────────────────────────────────────────────

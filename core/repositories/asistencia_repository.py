@@ -45,7 +45,11 @@ class IAsistenciaReadRepository(ABC):
 
     @abstractmethod
     def list_by_empleado_y_rango(
-        self, empleado_id: int, desde: str, hasta: str
+        self,
+        empleado_id: int,
+        desde: str,
+        hasta: str,
+        limit: Optional[int] = None,
     ) -> List[Asistencia]:
         """Devuelve las asistencias de un empleado en un rango inclusive.
 
@@ -56,6 +60,10 @@ class IAsistenciaReadRepository(ABC):
             empleado_id: FK a ``empleados(id)``.
             desde: ISO ``YYYY-MM-DD``. Límite inferior inclusivo.
             hasta: ISO ``YYYY-MM-DD``. Límite superior inclusivo.
+            limit: Si se pasa, corta el resultado a los primeros N
+                registros (tras el ORDER BY). Pensado para UIs que
+                quieran detectar truncamiento pidiendo ``N+1`` filas.
+                ``None`` trae todas las filas.
         """
 
     @abstractmethod
@@ -67,11 +75,24 @@ class IAsistenciaReadRepository(ABC):
         """
 
     @abstractmethod
-    def list_by_rango(self, desde: str, hasta: str) -> List[Asistencia]:
+    def list_by_rango(
+        self,
+        desde: str,
+        hasta: str,
+        limit: Optional[int] = None,
+    ) -> List[Asistencia]:
         """Devuelve todas las asistencias en un rango inclusive.
 
         Ordenadas por ``fecha`` ascendente + ``empleado_id`` ascendente.
         Pensado para reportes mensuales de toda la municipalidad.
+
+        Args:
+            desde: ISO ``YYYY-MM-DD``. Límite inferior inclusivo.
+            hasta: ISO ``YYYY-MM-DD``. Límite superior inclusivo.
+            limit: Si se pasa, corta el resultado a los primeros N
+                registros (tras el ORDER BY). Pensado para UIs que
+                quieran detectar truncamiento pidiendo ``N+1`` filas.
+                ``None`` trae todas las filas.
         """
 
 

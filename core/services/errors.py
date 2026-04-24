@@ -390,3 +390,18 @@ class InvalidRangoError(SincronizacionError):
 
 class ConsolidacionError(Exception):
     """Clase base para errores de ``ConsolidacionService``."""
+
+
+# ── Errores de asistencia (Fase 3.4b) ─────────────────────────────────────────
+
+
+class AsistenciaError(Exception):
+    """Clase base para errores de ``AsistenciaService``."""
+
+
+class AsistenciaNotFoundError(AsistenciaError):
+    """No existe una fila de asistencia con ese id."""
+
+    def __init__(self, asistencia_id: int) -> None:
+        super().__init__(f"No se encontró la asistencia con id {asistencia_id}.")
+        self.asistencia_id = asistencia_id
