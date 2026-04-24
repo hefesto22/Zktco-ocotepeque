@@ -37,6 +37,11 @@ from ui.guards.permission_guard import filter_visible
 from ui.menu_items import MENU_ITEMS, MenuItem
 from ui.views.placeholder_view import PlaceholderView
 
+# Factory de vista: recibe el contenedor padre y devuelve el widget a montar.
+# El composition root (``ui/app.py``) construye estas factories con los
+# controllers ya cableados — MainFrame solo las invoca por ``code``.
+ViewFactory = Callable[[ctk.CTkBaseClass], ctk.CTkBaseClass]
+
 
 class MainFrame(ctk.CTkFrame):
     """Frame principal de la app post-login."""
@@ -47,6 +52,7 @@ class MainFrame(ctk.CTkFrame):
         session: Session,
         controller: MainController,
         on_logout: Callable[[], None],
+        view_factories: Optional[Dict[str, ViewFactory]] = None,
     ) -> None:
         """Construye el frame.
 
@@ -57,11 +63,16 @@ class MainFrame(ctk.CTkFrame):
             controller: Controller ya inyectado (``open_view`` apunta a
                 este frame vía callback).
             on_logout: Callback invocado cuando el usuario cierra sesión.
+            view_factories: Mapa opcional ``{code: factory}``. Si el
+                ``code`` abierto está en el mapa, se monta la vista real;
+                si no, cae al ``PlaceholderView`` genérico (módulo aún
+                sin implementación).
         """
         super().__init__(master, corner_radius=0)
         self._session = session
         self._controller = controller
         self._on_logout = on_logout
+        self._view_factories: Dict[str, ViewFactory] = view_factories or {}
         self._log = logging.getLogger(self.__class__.__name__)
 
         # Index por code para mostrar el título/descripción en el placeholder.
@@ -210,8 +221,17 @@ class MainFrame(ctk.CTkFrame):
         )
         self._montar_view(bienvenida)
 
-    def _mostrar_placeholder_por_code(self, code: str) -> None:
-        """Monta ``PlaceholderView`` con los textos del ``MenuItem``."""
+    def _mostrar_vista_por_code(self, code: str) -> None:
+        """Monta la vista real si hay factory; si no, ``PlaceholderView``.
+
+        El lookup es por ``code`` del ``MenuItem`` (ej. ``"settings"``).
+        La factory recibe el contenedor padre y devuelve el widget ya
+        construido con todas sus dependencias inyectadas.
+        """
+        factory = self._view_factories.get(code)
+        if factory is not None:
+            self._montar_view(factory(self._content))
+            return
         item = self._items_by_code[code]
         placeholder = PlaceholderView(
             self._content,
@@ -241,4 +261,4 @@ class MainFrame(ctk.CTkFrame):
         Se expone como método público para que el composition root pueda
         pasárselo al ``MainController`` al construirlo.
         """
-        self._mostrar_placeholder_por_code(code)
+        self._mostrar_vista_por_code(code)

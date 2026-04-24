@@ -28,8 +28,9 @@ strict = true
 module = ["zk", "zk.*", "customtkinter", "customtkinter.*"]
 ignore_missing_imports = true
 
-# Las vistas subclass CTkFrame; sin stubs ``CTkFrame`` es ``Any`` y mypy
-# --strict bloquea el subclassing. Acotamos la excepción SOLO a ui.views.
+# Las vistas y componentes reutilizables subclass CTkFrame; sin stubs
+# ``CTkFrame`` es ``Any`` y mypy --strict bloquea el subclassing.
+# Acotamos la excepción SOLO a la capa de presentación Tk.
 [[tool.mypy.overrides]]
-module = ["ui.views.*"]
+module = ["ui.views.*", "ui.components.*"]
 disallow_subclassing_any = false

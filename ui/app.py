@@ -31,10 +31,16 @@ import customtkinter as ctk
 import config
 from core.models.usuario import Usuario
 from core.repositories.audit_log_repository_sqlite import AuditLogRepositorySQLite
+from core.repositories.cargo_repository_sqlite import CargoRepositorySQLite
+from core.repositories.departamento_repository_sqlite import (
+    DepartamentoRepositorySQLite,
+)
+from core.repositories.empleado_repository_sqlite import EmpleadoRepositorySQLite
 from core.repositories.rol_repository_sqlite import RolRepositorySQLite
 from core.repositories.usuario_repository_sqlite import UsuarioRepositorySQLite
 from core.services.audit_logger import AuditLogger
 from core.services.auth_service import AuthService
+from core.services.catalogo_service import CatalogoService
 from core.services.password_policy import PasswordPolicy
 from core.services.permission_service import PermissionService
 from core.services.session import Session
@@ -43,11 +49,13 @@ from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.security.bcrypt_hasher import BcryptHasher
 from ui.async_util import run_async_ui
+from ui.controllers.configuracion_controller import ConfiguracionController
 from ui.controllers.login_controller import LoginController
 from ui.controllers.main_controller import MainController
 from ui.controllers.setup_controller import SetupController
+from ui.views.configuracion_view import ConfiguracionView
 from ui.views.login_window import LoginFrame
-from ui.views.main_window import MainFrame
+from ui.views.main_window import MainFrame, ViewFactory
 from ui.views.setup_wizard_window import SetupWizardFrame
 
 
@@ -64,10 +72,12 @@ class _Services:
         auth: AuthService,
         permission: PermissionService,
         setup: SetupWizardService,
+        catalogo: CatalogoService,
     ) -> None:
         self.auth = auth
         self.permission = permission
         self.setup = setup
+        self.catalogo = catalogo
 
 
 def run() -> int:
@@ -115,6 +125,9 @@ def _build_services(database: Database) -> _Services:
     usuario_repo = UsuarioRepositorySQLite(database)
     rol_repo = RolRepositorySQLite(database)
     audit_repo = AuditLogRepositorySQLite(database)
+    dep_repo = DepartamentoRepositorySQLite(database)
+    cargo_repo = CargoRepositorySQLite(database)
+    empleado_repo = EmpleadoRepositorySQLite(database)
 
     hasher = BcryptHasher(config.BCRYPT_COST_FACTOR)
     audit_logger = AuditLogger(audit_repo)
@@ -144,10 +157,20 @@ def _build_services(database: Database) -> _Services:
         password_policy=password_policy,
     )
 
+    catalogo_service = CatalogoService(
+        dep_read=dep_repo,
+        dep_write=dep_repo,
+        cargo_read=cargo_repo,
+        cargo_write=cargo_repo,
+        empleado_read=empleado_repo,
+        audit_logger=audit_logger,
+    )
+
     return _Services(
         auth=auth_service,
         permission=PermissionService(),
         setup=setup_service,
+        catalogo=catalogo_service,
     )
 
 
@@ -235,11 +258,19 @@ class _Router:
             permission_service=self._services.permission,
             open_view=open_view_callback,
         )
+
+        # Factories de vistas reales de Fase 2. Cada code ausente del
+        # dict cae al PlaceholderView genérico del MainFrame.
+        view_factories: dict[str, ViewFactory] = {
+            "settings": self._build_configuracion_factory(session),
+        }
+
         frame = MainFrame(
             self._root,
             session=session,
             controller=controller,
             on_logout=self._on_logout,
+            view_factories=view_factories,
         )
         main_frame_holder["frame"] = frame
 
@@ -247,6 +278,25 @@ class _Router:
         # el futuro despacho asíncrono lo gestionará cada controller con
         # el widget actual.
         self._swap(frame)
+
+    def _build_configuracion_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Configuración.
+
+        El controller se instancia una sola vez con la sesión activa; la
+        factory se puede invocar múltiples veces (cada vez que el usuario
+        entra al módulo) y construye una vista nueva con el mismo
+        controller.
+        """
+        configuracion_controller = ConfiguracionController(
+            session=session,
+            permission_service=self._services.permission,
+            catalogo_service=self._services.catalogo,
+        )
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return ConfiguracionView(parent, controller=configuracion_controller)
+
+        return factory
 
     # ── Callbacks de cada frame ───────────────────────────────────────────
 
