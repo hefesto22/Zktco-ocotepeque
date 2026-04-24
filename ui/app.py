@@ -55,6 +55,7 @@ from core.repositories.sincronizacion_repository_sqlite import (
 )
 from core.repositories.turno_repository_sqlite import TurnoRepositorySQLite
 from core.repositories.usuario_repository_sqlite import UsuarioRepositorySQLite
+from core.services.asistencia_service import AsistenciaService
 from core.services.audit_logger import AuditLogger
 from core.services.auth_service import AuthService
 from core.services.catalogo_service import CatalogoService
@@ -71,6 +72,7 @@ from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.security.bcrypt_hasher import BcryptHasher
 from infrastructure.zkteco.pyzk_adapter import PyzkAdapter
 from ui.async_util import run_async_ui
+from ui.controllers.asistencia_controller import AsistenciaController
 from ui.controllers.configuracion_controller import ConfiguracionController
 from ui.controllers.empleados_controller import EmpleadosController
 from ui.controllers.login_controller import LoginController
@@ -78,6 +80,7 @@ from ui.controllers.main_controller import MainController
 from ui.controllers.setup_controller import SetupController
 from ui.controllers.sincronizacion_controller import SincronizacionController
 from ui.controllers.turnos_controller import TurnosController
+from ui.views.asistencia_view import AsistenciaView
 from ui.views.configuracion_view import ConfiguracionView
 from ui.views.empleados_view import EmpleadosView
 from ui.views.login_window import LoginFrame
@@ -104,6 +107,7 @@ class _Services:
         turno: TurnoService,
         empleado: EmpleadoService,
         sincronizacion: SincronizacionService,
+        asistencia: AsistenciaService,
         dispositivo_read: IDispositivoReadRepository,
         sincronizacion_read: ISincronizacionReadRepository,
     ) -> None:
@@ -114,6 +118,7 @@ class _Services:
         self.turno = turno
         self.empleado = empleado
         self.sincronizacion = sincronizacion
+        self.asistencia = asistencia
         self.dispositivo_read = dispositivo_read
         self.sincronizacion_read = sincronizacion_read
 
@@ -274,6 +279,14 @@ def _build_services(database: Database) -> _Services:
         consolidador=consolidacion_service,
     )
 
+    asistencia_service = AsistenciaService(
+        asistencia_read=asistencia_repo,
+        asistencia_write=asistencia_repo,
+        empleado_read=empleado_repo,
+        turno_read=turno_repo,
+        audit_logger=audit_logger,
+    )
+
     return _Services(
         auth=auth_service,
         permission=PermissionService(),
@@ -282,6 +295,7 @@ def _build_services(database: Database) -> _Services:
         turno=turno_service,
         empleado=empleado_service,
         sincronizacion=sincronizacion_service,
+        asistencia=asistencia_service,
         dispositivo_read=dispositivo_repo,
         sincronizacion_read=sincronizacion_repo,
     )
@@ -389,6 +403,7 @@ class _Router:
             "shifts": self._build_turnos_factory(session),
             "employees": self._build_empleados_factory(session),
             "zkteco_sync": self._build_sincronizacion_factory(session),
+            "attendance": self._build_asistencia_factory(session),
         }
 
         frame = MainFrame(
@@ -485,6 +500,25 @@ class _Router:
 
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
             return SincronizacionView(parent, controller=sincronizacion_controller)
+
+        return factory
+
+    def _build_asistencia_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Asistencia.
+
+        Mismo patrón que las demás factories: el controller se instancia
+        una sola vez con la sesión activa; la factory puede invocarse
+        múltiples veces y devuelve una vista nueva cada vez (reusando el
+        mismo controller).
+        """
+        asistencia_controller = AsistenciaController(
+            session=session,
+            permission_service=self._services.permission,
+            asistencia_service=self._services.asistencia,
+        )
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return AsistenciaView(parent, controller=asistencia_controller)
 
         return factory
 
