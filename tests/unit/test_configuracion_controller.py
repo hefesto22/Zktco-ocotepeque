@@ -39,7 +39,7 @@ class _StubCatalogoService:
     """
 
     def __init__(self) -> None:
-        self.calls: List[Tuple[str, tuple, dict]] = []
+        self.calls: List[Tuple[str, tuple[object, ...], dict[str, object]]] = []
         self._next_dep_id = 1
         self._next_cargo_id = 1
 
