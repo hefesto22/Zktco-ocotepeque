@@ -36,12 +36,16 @@ from core.repositories.departamento_repository_sqlite import (
     DepartamentoRepositorySQLite,
 )
 from core.repositories.empleado_repository_sqlite import EmpleadoRepositorySQLite
+from core.repositories.empleado_turno_repository_sqlite import (
+    EmpleadoTurnoRepositorySQLite,
+)
 from core.repositories.rol_repository_sqlite import RolRepositorySQLite
 from core.repositories.turno_repository_sqlite import TurnoRepositorySQLite
 from core.repositories.usuario_repository_sqlite import UsuarioRepositorySQLite
 from core.services.audit_logger import AuditLogger
 from core.services.auth_service import AuthService
 from core.services.catalogo_service import CatalogoService
+from core.services.empleado_service import EmpleadoService
 from core.services.password_policy import PasswordPolicy
 from core.services.permission_service import PermissionService
 from core.services.session import Session
@@ -52,11 +56,13 @@ from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.security.bcrypt_hasher import BcryptHasher
 from ui.async_util import run_async_ui
 from ui.controllers.configuracion_controller import ConfiguracionController
+from ui.controllers.empleados_controller import EmpleadosController
 from ui.controllers.login_controller import LoginController
 from ui.controllers.main_controller import MainController
 from ui.controllers.setup_controller import SetupController
 from ui.controllers.turnos_controller import TurnosController
 from ui.views.configuracion_view import ConfiguracionView
+from ui.views.empleados_view import EmpleadosView
 from ui.views.login_window import LoginFrame
 from ui.views.main_window import MainFrame, ViewFactory
 from ui.views.setup_wizard_window import SetupWizardFrame
@@ -78,12 +84,14 @@ class _Services:
         setup: SetupWizardService,
         catalogo: CatalogoService,
         turno: TurnoService,
+        empleado: EmpleadoService,
     ) -> None:
         self.auth = auth
         self.permission = permission
         self.setup = setup
         self.catalogo = catalogo
         self.turno = turno
+        self.empleado = empleado
 
 
 def run() -> int:
@@ -134,6 +142,7 @@ def _build_services(database: Database) -> _Services:
     dep_repo = DepartamentoRepositorySQLite(database)
     cargo_repo = CargoRepositorySQLite(database)
     empleado_repo = EmpleadoRepositorySQLite(database)
+    empleado_turno_repo = EmpleadoTurnoRepositorySQLite(database)
     turno_repo = TurnoRepositorySQLite(database)
 
     hasher = BcryptHasher(config.BCRYPT_COST_FACTOR)
@@ -179,12 +188,24 @@ def _build_services(database: Database) -> _Services:
         audit_logger=audit_logger,
     )
 
+    empleado_service = EmpleadoService(
+        empleado_read=empleado_repo,
+        empleado_write=empleado_repo,
+        empleado_turno_read=empleado_turno_repo,
+        empleado_turno_write=empleado_turno_repo,
+        departamento_read=dep_repo,
+        cargo_read=cargo_repo,
+        turno_read=turno_repo,
+        audit_logger=audit_logger,
+    )
+
     return _Services(
         auth=auth_service,
         permission=PermissionService(),
         setup=setup_service,
         catalogo=catalogo_service,
         turno=turno_service,
+        empleado=empleado_service,
     )
 
 
@@ -278,6 +299,7 @@ class _Router:
         view_factories: dict[str, ViewFactory] = {
             "settings": self._build_configuracion_factory(session),
             "shifts": self._build_turnos_factory(session),
+            "employees": self._build_empleados_factory(session),
         }
 
         frame = MainFrame(
@@ -328,6 +350,26 @@ class _Router:
 
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
             return TurnosView(parent, controller=turnos_controller)
+
+        return factory
+
+    def _build_empleados_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Empleados.
+
+        Inyecta 3 servicios en el controller (empleado + catálogo +
+        turno): todos fueron construidos una sola vez en el composition
+        root y se comparten entre vistas.
+        """
+        empleados_controller = EmpleadosController(
+            session=session,
+            permission_service=self._services.permission,
+            empleado_service=self._services.empleado,
+            catalogo_service=self._services.catalogo,
+            turno_service=self._services.turno,
+        )
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return EmpleadosView(parent, controller=empleados_controller)
 
         return factory
 
