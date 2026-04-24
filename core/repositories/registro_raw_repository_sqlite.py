@@ -79,6 +79,16 @@ class RegistroRawRepositorySQLite(IRegistroRawReadRepository, IRegistroRawWriteR
             ).fetchall()
         return [_row_to_registro_raw(r) for r in rows]
 
+    def list_by_rango(self, desde: str, hasta: str) -> List[RegistroRaw]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {self._SELECT_COLS} FROM registros_raw "
+                "WHERE timestamp >= ? AND timestamp <= ? "
+                "ORDER BY zkteco_user_id ASC, timestamp ASC, id ASC",
+                (desde, hasta),
+            ).fetchall()
+        return [_row_to_registro_raw(r) for r in rows]
+
     def count_by_sincronizacion(self, sincronizacion_id: int) -> int:
         with self._db.transaction() as conn:
             row: sqlite3.Row = conn.execute(

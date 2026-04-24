@@ -1,0 +1,396 @@
+"""Servicio de consolidación raw → asistencias.
+
+Toma las marcadas crudas de ``registros_raw`` en un rango, las cruza con
+la asignación de turno vigente de cada empleado para cada día, aplica
+las tolerancias configuradas por turno, y emite una fila consolidada en
+``asistencias`` por cada (empleado, fecha) del rango.
+
+Entradas críticas del algoritmo (todas pre-cargadas por el servicio):
+
+    - Empleados activos (``empleados.is_active = 1``).
+    - Mapeo ``zkteco_id → empleado``: solo empleados con reloj asignado.
+    - Historial completo de ``empleado_turnos`` por empleado (para
+      resolver qué turno aplicaba en cada día del rango).
+    - Catálogo de turnos (dict ``turno_id → Turno``).
+    - Feriados del rango (set de fechas).
+    - Marcadas del rango extendido (+1 día al final para salidas de
+      turnos nocturnos).
+
+Decisiones aprobadas que el servicio honra:
+
+    - D2 (consolidación inline): este servicio es llamado automáticamente
+      por ``SincronizacionService`` tras una sync exitosa, pero también
+      puede invocarse manualmente para re-consolidar un mes después de
+      editar turnos.
+    - D4 (zkteco_user_ids desconocidos): las marcadas de IDs sin empleado
+      mapeado se conservan en ``registros_raw`` (auditoría) pero NO
+      entran a la consolidación; en su lugar se reportan como warnings
+      en ``ResultadoConsolidacion.marcadas_desconocidas``.
+    - D5 (algoritmo híbrido turno nocturno): el detalle vive en
+      ``consolidacion_algorithm.py`` (funciones puras).
+
+Diseño (SOLID):
+    - S: consolida raw → asistencias. Nada más.
+    - D: recibe 6 repos + audit_logger por inyección.
+    - Reglas de excepción: errores por empleado se capturan y continúan
+      con el resto (robustez frente a datos sucios de un solo empleado);
+      errores estructurales (no hay empleados, rango inválido) se relanzan.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections import defaultdict
+from datetime import datetime, date, timedelta, timezone
+from typing import Dict, Iterator, List, Optional
+
+from core.models.asistencia import Asistencia
+from core.models.empleado import Empleado
+from core.models.empleado_turno import EmpleadoTurno
+from core.models.registro_raw import RegistroRaw
+from core.models.turno import Turno
+from core.repositories.asistencia_repository import IAsistenciaWriteRepository
+from core.repositories.empleado_repository import IEmpleadoReadRepository
+from core.repositories.empleado_turno_repository import IEmpleadoTurnoReadRepository
+from core.repositories.feriado_repository import IFeriadoReadRepository
+from core.repositories.registro_raw_repository import IRegistroRawReadRepository
+from core.repositories.turno_repository import ITurnoReadRepository
+from core.services.audit_logger import AuditLogger
+from core.services.consolidacion_algorithm import (
+    derivar_estado,
+    estado_no_trabaja,
+    parear_marcadas,
+    resolver_turno_en_fecha,
+    ventana_del_dia,
+)
+from core.services.errors import InvalidRangoError
+from core.services.sincronizacion_result import MarcadaDesconocida, ResultadoConsolidacion
+from core.services.validators import validate_fecha_iso
+
+logger = logging.getLogger(__name__)
+
+
+class ConsolidacionService:
+    """Genera filas ``asistencias`` a partir de ``registros_raw``."""
+
+    def __init__(
+        self,
+        empleado_read: IEmpleadoReadRepository,
+        empleado_turno_read: IEmpleadoTurnoReadRepository,
+        turno_read: ITurnoReadRepository,
+        feriado_read: IFeriadoReadRepository,
+        registro_raw_read: IRegistroRawReadRepository,
+        asistencia_write: IAsistenciaWriteRepository,
+        audit_logger: AuditLogger,
+    ) -> None:
+        """Construye el servicio.
+
+        Args:
+            empleado_read: Lista de empleados activos + resolución por
+                ``zkteco_id``.
+            empleado_turno_read: Historial completo por empleado para
+                resolver turno vigente en cada fecha histórica.
+            turno_read: Catálogo de turnos (se pre-carga completo).
+            feriado_read: ``list_by_rango`` para pre-cargar el rango.
+            registro_raw_read: ``list_by_rango`` (todas las marcadas, sin
+                filtrar por dispositivo — un empleado puede marcar en
+                múltiples relojes).
+            asistencia_write: UPSERT idempotente por (empleado, fecha).
+            audit_logger: Traza de qué rango se consolidó y cuándo.
+        """
+        self._empleado_read = empleado_read
+        self._empleado_turno_read = empleado_turno_read
+        self._turno_read = turno_read
+        self._feriado_read = feriado_read
+        self._registro_raw_read = registro_raw_read
+        self._asistencia_write = asistencia_write
+        self._audit = audit_logger
+
+    # ── API pública ──────────────────────────────────────────────────────────
+
+    def consolidar_rango(self, desde: str, hasta: str) -> ResultadoConsolidacion:
+        """Consolida raw → asistencias para todo empleado activo en el rango.
+
+        Proceso:
+
+            1. Valida el rango y lo convierte a ``date``.
+            2. Pre-carga: empleados activos, turnos, feriados, raws del
+               rango extendido (+1 día para salidas nocturnas).
+            3. Construye el mapeo ``zkteco_id → empleado`` y agrupa raws
+               por ``zkteco_user_id``.
+            4. Detecta raws de IDs no mapeados → ``marcadas_desconocidas``.
+            5. Para cada empleado × cada día del rango: consolida y upserta.
+            6. Errores a nivel empleado-día se capturan en
+               ``errores_empleado`` y se continúa con el resto.
+            7. Audita el rango consolidado.
+
+        Args:
+            desde: ISO ``"YYYY-MM-DD"``.
+            hasta: ISO ``"YYYY-MM-DD"`` (inclusivo, >= desde).
+
+        Returns:
+            ``ResultadoConsolidacion`` con el resumen numérico + warnings.
+
+        Raises:
+            InvalidRangoError: rango invertido.
+            InvalidDateError: formato inválido.
+        """
+        desde_date, hasta_date = self._validar_y_parsear_rango(desde, hasta)
+
+        empleados_activos = self._empleado_read.list_active()
+        turnos_por_id = self._cargar_turnos()
+        feriados_set = self._cargar_feriados(desde, hasta)
+        raws_por_zkteco = self._cargar_raws_agrupados(desde_date, hasta_date)
+
+        empleados_por_zkteco = {
+            emp.zkteco_id: emp for emp in empleados_activos if emp.zkteco_id is not None
+        }
+        marcadas_desconocidas = self._detectar_desconocidos(raws_por_zkteco, empleados_por_zkteco)
+
+        resultado = ResultadoConsolidacion(
+            empleados_procesados=len(empleados_activos),
+            marcadas_desconocidas=marcadas_desconocidas,
+            dias_procesados=_contar_dias(desde_date, hasta_date),
+        )
+
+        for empleado in empleados_activos:
+            self._consolidar_empleado_en_rango(
+                empleado=empleado,
+                desde_date=desde_date,
+                hasta_date=hasta_date,
+                turnos_por_id=turnos_por_id,
+                feriados_set=feriados_set,
+                raws_del_empleado=_raws_de_empleado(empleado, raws_por_zkteco),
+                resultado=resultado,
+            )
+
+        self._audit.log(
+            action="consolidacion.rango",
+            user_id=None,
+            details=json.dumps(
+                {
+                    "desde": desde,
+                    "hasta": hasta,
+                    "asistencias_upsertadas": resultado.asistencias_upsertadas,
+                    "empleados_procesados": resultado.empleados_procesados,
+                    "desconocidos": len(resultado.marcadas_desconocidas),
+                }
+            ),
+        )
+        return resultado
+
+    # ── Helpers de pre-carga ─────────────────────────────────────────────────
+
+    def _cargar_turnos(self) -> Dict[int, Turno]:
+        """Pre-carga todo el catálogo de turnos (activos + archivados).
+
+        Incluye archivados porque un empleado puede tener historial con un
+        turno que ya fue archivado — si el rango a consolidar cae en esa
+        época, ese turno debe resolverse correctamente.
+        """
+        turnos: Dict[int, Turno] = {}
+        for turno in self._turno_read.list_all():
+            assert turno.id is not None
+            turnos[turno.id] = turno
+        return turnos
+
+    def _cargar_feriados(self, desde: str, hasta: str) -> set[str]:
+        """Pre-carga las fechas feriadas del rango como ``set`` para lookup O(1)."""
+        return {feriado.fecha for feriado in self._feriado_read.list_by_rango(desde, hasta)}
+
+    def _cargar_raws_agrupados(
+        self, desde_date: date, hasta_date: date
+    ) -> Dict[int, List[RegistroRaw]]:
+        """Carga raws del rango extendido +1 día, agrupados por ``zkteco_user_id``.
+
+        El +1 día es para capturar salidas de turnos nocturnos que inician
+        el último día del rango. Si se pidió consolidar ``desde=2026-04-01,
+        hasta=2026-04-30``, una marcada de salida el 2026-05-01 02:00 para
+        un turno nocturno que entró el 30 aún debe contarse.
+
+        También se extiende -1 día al inicio, por simetría ante llamadas
+        "solo un día" en turnos nocturnos: si consolido solo el 2026-04-30,
+        podría haber un raw del 2026-04-29 00:30 correspondiente a un
+        turno que entró el 29 — pero ese turno se consolida el 29, no el
+        30, así que ese raw no me sirve acá. El -1 día conceptualmente es
+        para permitir tolerancias de entrada que caigan al día anterior
+        (p. ej. entrada oficial 00:05 con tolerancia 10 min → ventana
+        arranca 23:55 del día previo). Con tolerancias típicas <30min esto
+        es raro, pero es barato protegerse.
+        """
+        ts_desde = f"{(desde_date - timedelta(days=1)).isoformat()}T00:00:00"
+        ts_hasta = f"{(hasta_date + timedelta(days=1)).isoformat()}T23:59:59"
+        raws = self._registro_raw_read.list_by_rango(ts_desde, ts_hasta)
+        agrupados: Dict[int, List[RegistroRaw]] = defaultdict(list)
+        for raw in raws:
+            agrupados[raw.zkteco_user_id].append(raw)
+        return agrupados
+
+    def _detectar_desconocidos(
+        self,
+        raws_por_zkteco: Dict[int, List[RegistroRaw]],
+        empleados_por_zkteco: Dict[int, Empleado],
+    ) -> List[MarcadaDesconocida]:
+        """Identifica los ``zkteco_user_id`` sin empleado mapeado en nuestra BD."""
+        desconocidos: List[MarcadaDesconocida] = []
+        for zkteco_user_id, lista_raws in raws_por_zkteco.items():
+            if zkteco_user_id in empleados_por_zkteco:
+                continue
+            desconocidos.append(
+                MarcadaDesconocida(
+                    zkteco_user_id=zkteco_user_id,
+                    cantidad_marcadas=len(lista_raws),
+                )
+            )
+        desconocidos.sort(key=lambda m: m.zkteco_user_id)
+        return desconocidos
+
+    # ── Helpers de consolidación por empleado ────────────────────────────────
+
+    def _consolidar_empleado_en_rango(
+        self,
+        empleado: Empleado,
+        desde_date: date,
+        hasta_date: date,
+        turnos_por_id: Dict[int, Turno],
+        feriados_set: set[str],
+        raws_del_empleado: List[RegistroRaw],
+        resultado: ResultadoConsolidacion,
+    ) -> None:
+        """Consolida todos los días del rango para un empleado."""
+        assert empleado.id is not None
+        historial = self._empleado_turno_read.list_historial(empleado.id)
+
+        for fecha_iso in _iterar_fechas_iso(desde_date, hasta_date):
+            try:
+                asistencia = self._consolidar_dia_de_empleado(
+                    empleado=empleado,
+                    fecha_iso=fecha_iso,
+                    historial=historial,
+                    turnos_por_id=turnos_por_id,
+                    feriados_set=feriados_set,
+                    raws_del_empleado=raws_del_empleado,
+                )
+                self._asistencia_write.upsert(asistencia)
+                resultado.asistencias_upsertadas += 1
+            except ValueError as exc:
+                # Datos inconsistentes del empleado (historial mal formateado,
+                # turno asignado que ya no existe, fechas inválidas). Se
+                # loguea y se continúa con los demás — un empleado con
+                # datos sucios NO debe frenar todo el batch.
+                mensaje = f"empleado={empleado.id} fecha={fecha_iso}: {exc}"
+                resultado.errores_empleado.append(mensaje)
+                logger.warning("consolidacion.dia_fallido %s", mensaje)
+
+    def _consolidar_dia_de_empleado(
+        self,
+        empleado: Empleado,
+        fecha_iso: str,
+        historial: List[EmpleadoTurno],
+        turnos_por_id: Dict[int, Turno],
+        feriados_set: set[str],
+        raws_del_empleado: List[RegistroRaw],
+    ) -> Asistencia:
+        """Calcula la ``Asistencia`` de un empleado para un día.
+
+        Puro en el sentido de dominio: no persiste (el caller hace upsert),
+        solo construye la instancia.
+        """
+        assert empleado.id is not None
+        turno_id = resolver_turno_en_fecha(historial, fecha_iso)
+        turno: Optional[Turno] = turnos_por_id.get(turno_id) if turno_id is not None else None
+        es_feriado = fecha_iso in feriados_set
+
+        estado_override = estado_no_trabaja(turno, fecha_iso, es_feriado)
+        if estado_override is not None:
+            return self._asistencia_no_trabaja(
+                empleado_id=empleado.id,
+                fecha_iso=fecha_iso,
+                estado=estado_override,
+                turno_id=turno_id,
+            )
+
+        # Turno aplica ese día: buscamos marcadas dentro de la ventana.
+        assert turno is not None  # garantizado por estado_no_trabaja
+        inicio_ventana, fin_ventana = ventana_del_dia(turno, fecha_iso)
+        marcadas = parear_marcadas(raws_del_empleado, inicio_ventana, fin_ventana)
+        derivado = derivar_estado(marcadas, turno, fecha_iso)
+
+        return Asistencia(
+            id=None,
+            empleado_id=empleado.id,
+            fecha=fecha_iso,
+            estado=derivado.estado,
+            turno_id_aplicado=turno_id,
+            hora_entrada_real=derivado.hora_entrada_real,
+            hora_salida_real=derivado.hora_salida_real,
+            minutos_tarde=derivado.minutos_tarde,
+            minutos_salida_temprana=derivado.minutos_salida_temprana,
+            consolidada_en=_now_iso_utc(),
+        )
+
+    def _asistencia_no_trabaja(
+        self,
+        empleado_id: int,
+        fecha_iso: str,
+        estado: str,
+        turno_id: Optional[int],
+    ) -> Asistencia:
+        """Construye una ``Asistencia`` para estados FERIADO / SIN_TURNO.
+
+        ``turno_id_aplicado`` se deja en ``None`` en ambos casos (el turno
+        no aplicó ese día, por feriado o porque el empleado no debía
+        trabajar según el bitmask de días).
+        """
+        del turno_id  # no se persiste — los estados "no trabaja" no lo necesitan
+        return Asistencia(
+            id=None,
+            empleado_id=empleado_id,
+            fecha=fecha_iso,
+            estado=estado,
+            turno_id_aplicado=None,
+            hora_entrada_real=None,
+            hora_salida_real=None,
+            minutos_tarde=0,
+            minutos_salida_temprana=0,
+            consolidada_en=_now_iso_utc(),
+        )
+
+    def _validar_y_parsear_rango(self, desde: str, hasta: str) -> tuple[date, date]:
+        """Valida formato ISO y orden, y retorna tupla de ``date``."""
+        desde_date = validate_fecha_iso(desde, campo="desde")
+        hasta_date = validate_fecha_iso(hasta, campo="hasta")
+        if desde_date > hasta_date:
+            raise InvalidRangoError(desde=desde, hasta=hasta)
+        return desde_date, hasta_date
+
+
+# ── Helpers módulo ────────────────────────────────────────────────────────────
+
+
+def _raws_de_empleado(
+    empleado: Empleado, raws_por_zkteco: Dict[int, List[RegistroRaw]]
+) -> List[RegistroRaw]:
+    """Devuelve las marcadas del empleado, o ``[]`` si no tiene ``zkteco_id`` mapeado."""
+    if empleado.zkteco_id is None:
+        return []
+    return raws_por_zkteco.get(empleado.zkteco_id, [])
+
+
+def _iterar_fechas_iso(desde: date, hasta: date) -> Iterator[str]:
+    """Itera inclusive desde ``desde`` hasta ``hasta`` emitiendo strings ISO."""
+    actual = desde
+    while actual <= hasta:
+        yield actual.isoformat()
+        actual = actual + timedelta(days=1)
+
+
+def _contar_dias(desde: date, hasta: date) -> int:
+    """Cantidad de días en el rango inclusive."""
+    return (hasta - desde).days + 1
+
+
+def _now_iso_utc() -> str:
+    """Momento actual en ISO-8601 UTC con segundos (sin microsegundos)."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()

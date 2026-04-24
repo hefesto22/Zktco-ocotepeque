@@ -69,6 +69,25 @@ class IRegistroRawReadRepository(ABC):
         """
 
     @abstractmethod
+    def list_by_rango(self, desde: str, hasta: str) -> List[RegistroRaw]:
+        """Devuelve todas las marcadas del rango, a través de TODOS los dispositivos.
+
+        Pensado para el servicio de consolidación: necesita una pasada
+        única sobre todas las marcadas del rango para agruparlas en
+        memoria por ``zkteco_user_id`` sin N+1 queries. Un empleado puede
+        marcar entrada en un reloj y salida en otro, así que el filtro
+        por dispositivo no aplica — se quiere TODO.
+
+        Args:
+            desde: ISO-8601 ``"YYYY-MM-DDTHH:MM:SS"``. Inclusivo.
+            hasta: ISO-8601 ``"YYYY-MM-DDTHH:MM:SS"``. Inclusivo.
+
+        Returns:
+            Lista ordenada por ``zkteco_user_id`` asc, ``timestamp`` asc,
+            ``id`` asc — así el servicio puede hacer groupby lineal.
+        """
+
+    @abstractmethod
     def count_by_sincronizacion(self, sincronizacion_id: int) -> int:
         """Cuenta cuántos registros pertenecen a una sync.
 

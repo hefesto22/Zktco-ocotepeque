@@ -346,3 +346,47 @@ class TurnoYaAsignadoError(EmpleadoError):
             "Use cambiar_turno() para reemplazarlo."
         )
         self.empleado_id = empleado_id
+
+
+# ── Errores de sincronización (Fase 3) ────────────────────────────────────────
+
+
+class SincronizacionError(Exception):
+    """Clase base para errores de ``SincronizacionService``."""
+
+
+class DispositivoNotFoundError(SincronizacionError):
+    """No existe un dispositivo con ese id."""
+
+    def __init__(self, dispositivo_id: int) -> None:
+        super().__init__(f"No se encontró el dispositivo con id {dispositivo_id}.")
+        self.dispositivo_id = dispositivo_id
+
+
+class DispositivoInactiveError(SincronizacionError):
+    """Se intentó sincronizar un dispositivo archivado."""
+
+    def __init__(self, dispositivo_id: int) -> None:
+        super().__init__(
+            f"El dispositivo con id {dispositivo_id} está archivado y no "
+            "puede sincronizarse. Reactívelo primero."
+        )
+        self.dispositivo_id = dispositivo_id
+
+
+class InvalidRangoError(SincronizacionError):
+    """El rango de sincronización es inválido (``desde > hasta``)."""
+
+    def __init__(self, desde: str, hasta: str) -> None:
+        super().__init__(
+            f"El rango solicitado es inválido: desde={desde} es posterior a hasta={hasta}."
+        )
+        self.desde = desde
+        self.hasta = hasta
+
+
+# ── Errores de consolidación (Fase 3) ─────────────────────────────────────────
+
+
+class ConsolidacionError(Exception):
+    """Clase base para errores de ``ConsolidacionService``."""

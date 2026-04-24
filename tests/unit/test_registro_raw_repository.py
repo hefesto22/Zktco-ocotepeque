@@ -322,6 +322,92 @@ def test_list_by_zkteco_user_y_rango_fuera_devuelve_vacio(
     )
 
 
+# ── Tests: list_by_rango ──────────────────────────────────────────────────────
+
+
+def test_list_by_rango_incluye_todos_los_dispositivos(
+    setup: Tuple[RegistroRawRepositorySQLite, int, int, Database],
+) -> None:
+    """``list_by_rango`` no filtra por dispositivo — un empleado puede marcar
+    en dos relojes diferentes y ambas marcadas deben aparecer."""
+    repo, disp_id_1, sync_id, db = setup
+    disp_2 = DispositivoRepositorySQLite(db).create(
+        Dispositivo(id=None, nombre="Otro", ip="10.0.0.2", puerto=4370)
+    )
+    assert disp_2.id is not None
+    sync_2 = SincronizacionRepositorySQLite(db).create(
+        Sincronizacion(
+            id=None,
+            dispositivo_id=disp_2.id,
+            iniciada_por_user_id=None,
+            inicio="2026-04-24T11:00:00",
+            rango_desde="2026-04-01",
+            rango_hasta="2026-04-30",
+        )
+    )
+    assert sync_2.id is not None
+
+    repo.create_bulk(
+        [
+            _nuevo_registro(disp_id_1, sync_id, 101, "2026-04-15T08:00:00"),
+            _nuevo_registro(disp_2.id, sync_2.id, 101, "2026-04-15T17:00:00"),
+        ]
+    )
+    resultado = repo.list_by_rango("2026-04-15T00:00:00", "2026-04-15T23:59:59")
+    assert len(resultado) == 2
+    dispositivos = {r.dispositivo_id for r in resultado}
+    assert dispositivos == {disp_id_1, disp_2.id}
+
+
+def test_list_by_rango_ordena_por_zkteco_user_y_timestamp(
+    setup: Tuple[RegistroRawRepositorySQLite, int, int, Database],
+) -> None:
+    """Orden: zkteco_user_id ASC, timestamp ASC, id ASC (para groupby lineal)."""
+    repo, disp_id, sync_id, _ = setup
+    repo.create_bulk(
+        [
+            _nuevo_registro(disp_id, sync_id, 102, "2026-04-15T08:00:00"),
+            _nuevo_registro(disp_id, sync_id, 101, "2026-04-15T17:00:00"),
+            _nuevo_registro(disp_id, sync_id, 101, "2026-04-15T08:00:00"),
+            _nuevo_registro(disp_id, sync_id, 102, "2026-04-15T17:00:00"),
+        ]
+    )
+    resultado = repo.list_by_rango("2026-04-15T00:00:00", "2026-04-15T23:59:59")
+    pares = [(r.zkteco_user_id, r.timestamp) for r in resultado]
+    assert pares == [
+        (101, "2026-04-15T08:00:00"),
+        (101, "2026-04-15T17:00:00"),
+        (102, "2026-04-15T08:00:00"),
+        (102, "2026-04-15T17:00:00"),
+    ]
+
+
+def test_list_by_rango_inclusivo_en_ambos_extremos(
+    setup: Tuple[RegistroRawRepositorySQLite, int, int, Database],
+) -> None:
+    repo, disp_id, sync_id, _ = setup
+    repo.create_bulk(
+        [
+            _nuevo_registro(disp_id, sync_id, 101, "2026-04-14T23:59:59"),
+            _nuevo_registro(disp_id, sync_id, 101, "2026-04-15T00:00:00"),
+            _nuevo_registro(disp_id, sync_id, 101, "2026-04-15T23:59:59"),
+            _nuevo_registro(disp_id, sync_id, 101, "2026-04-16T00:00:00"),
+        ]
+    )
+    resultado = repo.list_by_rango("2026-04-15T00:00:00", "2026-04-15T23:59:59")
+    assert [r.timestamp for r in resultado] == [
+        "2026-04-15T00:00:00",
+        "2026-04-15T23:59:59",
+    ]
+
+
+def test_list_by_rango_vacio_cuando_no_hay_registros(
+    setup: Tuple[RegistroRawRepositorySQLite, int, int, Database],
+) -> None:
+    repo, _, _, _ = setup
+    assert repo.list_by_rango("2026-04-01T00:00:00", "2026-04-30T23:59:59") == []
+
+
 # ── Tests: count_by_sincronizacion ────────────────────────────────────────────
 
 
