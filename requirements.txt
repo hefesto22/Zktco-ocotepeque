@@ -5,6 +5,9 @@
 # UI — interfaz gráfica customtkinter
 customtkinter>=5.2,<6.0
 Pillow>=10.0,<12.0
+# Selector de fechas: CTk no trae DatePicker nativo; tkcalendar es estándar tk
+# y se empaqueta bien con PyInstaller (Sub-3.4a).
+tkcalendar>=1.6,<2.0
 
 # Biométrico — comunicación TCP/IP con dispositivo ZKTeco
 pyzk>=0.9

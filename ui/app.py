@@ -30,42 +30,60 @@ import customtkinter as ctk
 
 import config
 from core.models.usuario import Usuario
+from core.repositories.asistencia_repository_sqlite import AsistenciaRepositorySQLite
 from core.repositories.audit_log_repository_sqlite import AuditLogRepositorySQLite
 from core.repositories.cargo_repository_sqlite import CargoRepositorySQLite
 from core.repositories.departamento_repository_sqlite import (
     DepartamentoRepositorySQLite,
 )
+from core.repositories.dispositivo_repository import IDispositivoReadRepository
+from core.repositories.dispositivo_repository_sqlite import DispositivoRepositorySQLite
 from core.repositories.empleado_repository_sqlite import EmpleadoRepositorySQLite
 from core.repositories.empleado_turno_repository_sqlite import (
     EmpleadoTurnoRepositorySQLite,
 )
+from core.repositories.feriado_repository_sqlite import FeriadoRepositorySQLite
+from core.repositories.registro_raw_repository_sqlite import (
+    RegistroRawRepositorySQLite,
+)
 from core.repositories.rol_repository_sqlite import RolRepositorySQLite
+from core.repositories.sincronizacion_repository import (
+    ISincronizacionReadRepository,
+)
+from core.repositories.sincronizacion_repository_sqlite import (
+    SincronizacionRepositorySQLite,
+)
 from core.repositories.turno_repository_sqlite import TurnoRepositorySQLite
 from core.repositories.usuario_repository_sqlite import UsuarioRepositorySQLite
 from core.services.audit_logger import AuditLogger
 from core.services.auth_service import AuthService
 from core.services.catalogo_service import CatalogoService
+from core.services.consolidacion_service import ConsolidacionService
 from core.services.empleado_service import EmpleadoService
 from core.services.password_policy import PasswordPolicy
 from core.services.permission_service import PermissionService
 from core.services.session import Session
 from core.services.setup_wizard_service import SetupWizardService
+from core.services.sincronizacion_service import SincronizacionService
 from core.services.turno_service import TurnoService
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.security.bcrypt_hasher import BcryptHasher
+from infrastructure.zkteco.pyzk_adapter import PyzkAdapter
 from ui.async_util import run_async_ui
 from ui.controllers.configuracion_controller import ConfiguracionController
 from ui.controllers.empleados_controller import EmpleadosController
 from ui.controllers.login_controller import LoginController
 from ui.controllers.main_controller import MainController
 from ui.controllers.setup_controller import SetupController
+from ui.controllers.sincronizacion_controller import SincronizacionController
 from ui.controllers.turnos_controller import TurnosController
 from ui.views.configuracion_view import ConfiguracionView
 from ui.views.empleados_view import EmpleadosView
 from ui.views.login_window import LoginFrame
 from ui.views.main_window import MainFrame, ViewFactory
 from ui.views.setup_wizard_window import SetupWizardFrame
+from ui.views.sincronizacion_view import SincronizacionView
 from ui.views.turnos_view import TurnosView
 
 
@@ -85,6 +103,9 @@ class _Services:
         catalogo: CatalogoService,
         turno: TurnoService,
         empleado: EmpleadoService,
+        sincronizacion: SincronizacionService,
+        dispositivo_read: IDispositivoReadRepository,
+        sincronizacion_read: ISincronizacionReadRepository,
     ) -> None:
         self.auth = auth
         self.permission = permission
@@ -92,6 +113,9 @@ class _Services:
         self.catalogo = catalogo
         self.turno = turno
         self.empleado = empleado
+        self.sincronizacion = sincronizacion
+        self.dispositivo_read = dispositivo_read
+        self.sincronizacion_read = sincronizacion_read
 
 
 def run() -> int:
@@ -108,8 +132,13 @@ def run() -> int:
 
     services = _build_services(database)
 
+    # Recovery de syncs huérfanas antes de arrancar la UI (Decisión 1).
+    # Silencioso si no hay pendientes; si las hay, el primer mount de la
+    # vista de sincronización pinta un banner con el conteo.
+    huerfanas_cerradas = _recover_huerfanas_al_arranque(services, log)
+
     root = _crear_root()
-    router = _Router(root, services, log)
+    router = _Router(root, services, log, huerfanas_cerradas=huerfanas_cerradas)
     router.start()
 
     log.info("Entrando al mainloop de customtkinter.")
@@ -134,6 +163,26 @@ def _run_migrations(database: Database, log: logging.Logger) -> bool:
     return True
 
 
+def _recover_huerfanas_al_arranque(
+    services: _Services,
+    log: logging.Logger,
+) -> int:
+    """Cierra syncs que quedaron ``EN_CURSO`` por un cierre previo.
+
+    Se invoca una sola vez al arrancar (Decisión 1 aprobada). Nunca
+    lanza: un fallo aquí no debe impedir arrancar la app — logueamos y
+    devolvemos 0 para que el banner de aviso quede silencioso.
+    """
+    try:
+        cantidad = services.sincronizacion.recover_huerfanas()
+    except Exception:  # noqa: BLE001 — no impedimos arrancar la app
+        log.exception("Error cerrando syncs huérfanas al arrancar.")
+        return 0
+    if cantidad:
+        log.info("Se cerraron %s sync(s) huérfana(s) al arrancar.", cantidad)
+    return cantidad
+
+
 def _build_services(database: Database) -> _Services:
     """Instancia servicios con sus repos/hashers/loggers reales."""
     usuario_repo = UsuarioRepositorySQLite(database)
@@ -144,9 +193,15 @@ def _build_services(database: Database) -> _Services:
     empleado_repo = EmpleadoRepositorySQLite(database)
     empleado_turno_repo = EmpleadoTurnoRepositorySQLite(database)
     turno_repo = TurnoRepositorySQLite(database)
+    dispositivo_repo = DispositivoRepositorySQLite(database)
+    sincronizacion_repo = SincronizacionRepositorySQLite(database)
+    registro_raw_repo = RegistroRawRepositorySQLite(database)
+    asistencia_repo = AsistenciaRepositorySQLite(database)
+    feriado_repo = FeriadoRepositorySQLite(database)
 
     hasher = BcryptHasher(config.BCRYPT_COST_FACTOR)
     audit_logger = AuditLogger(audit_repo)
+    zkteco_adapter = PyzkAdapter()
 
     password_policy = PasswordPolicy(
         min_length=config.MIN_PASSWORD_LENGTH,
@@ -199,6 +254,26 @@ def _build_services(database: Database) -> _Services:
         audit_logger=audit_logger,
     )
 
+    consolidacion_service = ConsolidacionService(
+        empleado_read=empleado_repo,
+        empleado_turno_read=empleado_turno_repo,
+        turno_read=turno_repo,
+        feriado_read=feriado_repo,
+        registro_raw_read=registro_raw_repo,
+        asistencia_write=asistencia_repo,
+        audit_logger=audit_logger,
+    )
+
+    sincronizacion_service = SincronizacionService(
+        dispositivo_read=dispositivo_repo,
+        sincronizacion_read=sincronizacion_repo,
+        sincronizacion_write=sincronizacion_repo,
+        registro_raw_write=registro_raw_repo,
+        adapter=zkteco_adapter,
+        audit_logger=audit_logger,
+        consolidador=consolidacion_service,
+    )
+
     return _Services(
         auth=auth_service,
         permission=PermissionService(),
@@ -206,6 +281,9 @@ def _build_services(database: Database) -> _Services:
         catalogo=catalogo_service,
         turno=turno_service,
         empleado=empleado_service,
+        sincronizacion=sincronizacion_service,
+        dispositivo_read=dispositivo_repo,
+        sincronizacion_read=sincronizacion_repo,
     )
 
 
@@ -232,11 +310,21 @@ class _Router:
     sesión vive únicamente en el ``MainFrame`` activo.
     """
 
-    def __init__(self, root: ctk.CTk, services: _Services, log: logging.Logger) -> None:
+    def __init__(
+        self,
+        root: ctk.CTk,
+        services: _Services,
+        log: logging.Logger,
+        huerfanas_cerradas: int = 0,
+    ) -> None:
         self._root = root
         self._services = services
         self._log = log
         self._current_frame: Optional[ctk.CTkFrame] = None
+        # Cantidad de syncs huérfanas cerradas al arrancar; el primer mount
+        # de SincronizacionView la consume como banner de aviso y la
+        # limpia. Un logout/login posterior no re-dispara el aviso.
+        self._huerfanas_cerradas = huerfanas_cerradas
 
     def start(self) -> None:
         """Decide qué frame mostrar al arrancar la app."""
@@ -300,6 +388,7 @@ class _Router:
             "settings": self._build_configuracion_factory(session),
             "shifts": self._build_turnos_factory(session),
             "employees": self._build_empleados_factory(session),
+            "zkteco_sync": self._build_sincronizacion_factory(session),
         }
 
         frame = MainFrame(
@@ -370,6 +459,32 @@ class _Router:
 
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
             return EmpleadosView(parent, controller=empleados_controller)
+
+        return factory
+
+    def _build_sincronizacion_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Sincronización ZKTeco.
+
+        El controller se instancia una sola vez con la sesión activa. Si
+        hay syncs huérfanas cerradas al arrancar, las inyectamos como
+        ``aviso_recuperacion`` — la primera construcción de la vista las
+        consume y limpia el atributo, así un logout/login no re-dispara
+        el aviso.
+        """
+        sincronizacion_controller = SincronizacionController(
+            session=session,
+            permission_service=self._services.permission,
+            sincronizacion_service=self._services.sincronizacion,
+            dispositivo_read=self._services.dispositivo_read,
+            sincronizacion_read=self._services.sincronizacion_read,
+        )
+        if self._huerfanas_cerradas > 0:
+            sincronizacion_controller.aviso_recuperacion = self._huerfanas_cerradas
+            # Solo se inyecta una vez: el banner se muestra al primer mount.
+            self._huerfanas_cerradas = 0
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return SincronizacionView(parent, controller=sincronizacion_controller)
 
         return factory
 
