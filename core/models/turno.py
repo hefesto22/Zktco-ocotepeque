@@ -96,6 +96,14 @@ class Turno:
         cruza_medianoche: Flag derivado de ``hora_salida < hora_entrada``.
             Se persiste explícitamente para que los queries no tengan que
             recalcularlo; el servicio lo setea al crear/editar.
+        minutos_tolerancia_entrada: Minutos de gracia a partir de la hora
+            oficial de entrada antes de marcar TARDE. Default 10. Ejemplo:
+            entrada 08:00 + tolerancia 10 → llegadas hasta 08:10 son PRESENTE.
+            Colocado por turno (no global) porque distintos perfiles requieren
+            distinta estrictez (ejecutivos vs. vigilancia).
+        minutos_tolerancia_salida: Minutos de gracia ANTES de la hora oficial
+            de salida (salida temprana permitida). Default 0. Ejemplo: salida
+            17:00 + tolerancia 5 → salidas desde 16:55 son PRESENTE.
         is_active: ``False`` archiva el turno — deja de aparecer en
             dropdowns de asignación pero preserva las asignaciones
             históricas en ``empleado_turnos``.
@@ -108,4 +116,6 @@ class Turno:
     minutos_descanso: int = 0
     dias_semana: int = DIAS_LABORALES
     cruza_medianoche: bool = False
+    minutos_tolerancia_entrada: int = 10
+    minutos_tolerancia_salida: int = 0
     is_active: bool = True
