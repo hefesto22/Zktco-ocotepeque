@@ -37,6 +37,7 @@ from core.repositories.departamento_repository_sqlite import (
 )
 from core.repositories.empleado_repository_sqlite import EmpleadoRepositorySQLite
 from core.repositories.rol_repository_sqlite import RolRepositorySQLite
+from core.repositories.turno_repository_sqlite import TurnoRepositorySQLite
 from core.repositories.usuario_repository_sqlite import UsuarioRepositorySQLite
 from core.services.audit_logger import AuditLogger
 from core.services.auth_service import AuthService
@@ -45,6 +46,7 @@ from core.services.password_policy import PasswordPolicy
 from core.services.permission_service import PermissionService
 from core.services.session import Session
 from core.services.setup_wizard_service import SetupWizardService
+from core.services.turno_service import TurnoService
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.security.bcrypt_hasher import BcryptHasher
@@ -53,10 +55,12 @@ from ui.controllers.configuracion_controller import ConfiguracionController
 from ui.controllers.login_controller import LoginController
 from ui.controllers.main_controller import MainController
 from ui.controllers.setup_controller import SetupController
+from ui.controllers.turnos_controller import TurnosController
 from ui.views.configuracion_view import ConfiguracionView
 from ui.views.login_window import LoginFrame
 from ui.views.main_window import MainFrame, ViewFactory
 from ui.views.setup_wizard_window import SetupWizardFrame
+from ui.views.turnos_view import TurnosView
 
 
 class _Services:
@@ -73,11 +77,13 @@ class _Services:
         permission: PermissionService,
         setup: SetupWizardService,
         catalogo: CatalogoService,
+        turno: TurnoService,
     ) -> None:
         self.auth = auth
         self.permission = permission
         self.setup = setup
         self.catalogo = catalogo
+        self.turno = turno
 
 
 def run() -> int:
@@ -128,6 +134,7 @@ def _build_services(database: Database) -> _Services:
     dep_repo = DepartamentoRepositorySQLite(database)
     cargo_repo = CargoRepositorySQLite(database)
     empleado_repo = EmpleadoRepositorySQLite(database)
+    turno_repo = TurnoRepositorySQLite(database)
 
     hasher = BcryptHasher(config.BCRYPT_COST_FACTOR)
     audit_logger = AuditLogger(audit_repo)
@@ -166,11 +173,18 @@ def _build_services(database: Database) -> _Services:
         audit_logger=audit_logger,
     )
 
+    turno_service = TurnoService(
+        turno_read=turno_repo,
+        turno_write=turno_repo,
+        audit_logger=audit_logger,
+    )
+
     return _Services(
         auth=auth_service,
         permission=PermissionService(),
         setup=setup_service,
         catalogo=catalogo_service,
+        turno=turno_service,
     )
 
 
@@ -263,6 +277,7 @@ class _Router:
         # dict cae al PlaceholderView genérico del MainFrame.
         view_factories: dict[str, ViewFactory] = {
             "settings": self._build_configuracion_factory(session),
+            "shifts": self._build_turnos_factory(session),
         }
 
         frame = MainFrame(
@@ -295,6 +310,24 @@ class _Router:
 
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
             return ConfiguracionView(parent, controller=configuracion_controller)
+
+        return factory
+
+    def _build_turnos_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Turnos.
+
+        Mismo patrón que ``_build_configuracion_factory``: el controller
+        se instancia una sola vez con la sesión; la factory puede
+        invocarse múltiples veces y devuelve una vista nueva cada vez.
+        """
+        turnos_controller = TurnosController(
+            session=session,
+            permission_service=self._services.permission,
+            turno_service=self._services.turno,
+        )
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return TurnosView(parent, controller=turnos_controller)
 
         return factory
 
