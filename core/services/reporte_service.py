@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from core.models.descarga_reporte import DescargaReporte, TipoReporte
 from core.repositories.descarga_reporte_repository import (
@@ -103,6 +103,19 @@ class ReporteService:
     def list_historial_descargas(self, limit: int = 50) -> List[DescargaReporte]:
         """Devuelve las descargas más recientes (todas, sin filtrar usuario)."""
         return self._descarga_read.list_recientes(limit=limit)
+
+    def list_empleados_para_filtro(self) -> List[Tuple[int, str]]:
+        """Devuelve ``[(empleado_id, "apellidos nombres")]`` para el combo.
+
+        La vista de Reportes usa este método para poblar el dropdown
+        que filtra el export por empleado. Delega en el servicio de
+        asistencia, que ya implementa el formateo del nombre y el
+        filtro por empleados activos. Mantenerlo expuesto desde
+        ``ReporteService`` evita que el controller de reportes deba
+        conocer ``AsistenciaService`` (cumple la regla de que cada
+        controller habla con UN solo servicio de dominio).
+        """
+        return self._asistencia.list_empleados_para_filtro()
 
     # ── Writes ────────────────────────────────────────────────────────────
 

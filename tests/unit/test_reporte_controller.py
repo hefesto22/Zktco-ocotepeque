@@ -63,9 +63,11 @@ class _StubReporteService:
         self.contar_result: int = 0
         self.exportar_result: DescargaReporte = _descarga()
         self.historial_result: List[DescargaReporte] = []
+        self.empleados_result: List[Tuple[int, str]] = []
         self.contar_raises: Optional[Exception] = None
         self.exportar_raises: Optional[Exception] = None
         self.historial_raises: Optional[Exception] = None
+        self.empleados_raises: Optional[Exception] = None
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append((name, args, kwargs))
@@ -113,6 +115,12 @@ class _StubReporteService:
         if self.historial_raises is not None:
             raise self.historial_raises
         return self.historial_result
+
+    def list_empleados_para_filtro(self) -> List[Tuple[int, str]]:
+        self._record("list_empleados_para_filtro")
+        if self.empleados_raises is not None:
+            raise self.empleados_raises
+        return self.empleados_result
 
 
 # ── Fábricas de controller + session ────────────────────────────────────────
@@ -252,6 +260,25 @@ def test_list_historial_delega_con_limit_custom() -> None:
     ctrl, stub = _controller({perms.VIEW_EXPORT_HISTORY})
     ctrl.list_historial_descargas(limit=10)
     assert stub.calls[0][2]["limit"] == 10
+
+
+# ── list_empleados_para_filtro ──────────────────────────────────────────────
+
+
+def test_list_empleados_para_filtro_delega() -> None:
+    ctrl, stub = _controller({perms.EXPORT_REPORTS})
+    stub.empleados_result = [(1, "Pérez Juan"), (2, "Gómez María")]
+    result = ctrl.list_empleados_para_filtro()
+    assert result == [(1, "Pérez Juan"), (2, "Gómez María")]
+    assert stub.calls == [("list_empleados_para_filtro", (), {})]
+
+
+def test_list_empleados_para_filtro_sin_permiso_lanza_denied() -> None:
+    """Sin EXPORT_REPORTS no se puede poblar el filtro de empleados."""
+    ctrl, stub = _controller({perms.VIEW_EXPORT_HISTORY})
+    with pytest.raises(PermissionDeniedError):
+        ctrl.list_empleados_para_filtro()
+    assert stub.calls == []
 
 
 # ── Guardas de permisos ─────────────────────────────────────────────────────

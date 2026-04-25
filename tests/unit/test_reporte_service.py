@@ -114,6 +114,7 @@ def _build_service(
     list_result: Optional[List[AsistenciaVista]] = None,
     count_result: int = 0,
     exporter_raises: Optional[OSError] = None,
+    empleados_result: Optional[List[Tuple[int, str]]] = None,
 ) -> Tuple[ReporteService, _StubExporter, _StubDescargaRepo, MagicMock, MagicMock]:
     """Arma el servicio con stubs/mocks; devuelve también las refs para asserts."""
     asist_service = MagicMock(spec=AsistenciaService)
@@ -121,6 +122,9 @@ def _build_service(
         list_result if list_result is not None else []
     )
     asist_service.contar_asistencias_para_reporte.return_value = count_result
+    asist_service.list_empleados_para_filtro.return_value = (
+        empleados_result if empleados_result is not None else []
+    )
     descarga_repo = _StubDescargaRepo()
     exporter = _StubExporter(raises=exporter_raises)
     audit_logger = MagicMock(spec=AuditLogger)
@@ -313,6 +317,18 @@ def test_exportar_arma_bundle_con_resumen_calculado() -> None:
     datos_export, _ = exporter.calls[0]
     assert len(datos_export.resumen_por_empleado) == 1
     assert datos_export.resumen_por_empleado[0].dias_presente == 1
+
+
+# ── list_empleados_para_filtro ──────────────────────────────────────────────
+
+
+def test_list_empleados_para_filtro_delega_al_asistencia_service() -> None:
+    """El servicio delega 1:1 sin transformar los datos."""
+    empleados = [(1, "Pérez Juan"), (2, "Gómez María")]
+    service, _, _, _, asist_service = _build_service(empleados_result=empleados)
+    resultado = service.list_empleados_para_filtro()
+    assert resultado == empleados
+    asist_service.list_empleados_para_filtro.assert_called_once_with()
 
 
 # ── Cobertura: inserted preserva timestamp del servicio ─────────────────────

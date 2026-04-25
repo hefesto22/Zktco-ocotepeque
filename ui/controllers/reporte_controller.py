@@ -23,7 +23,7 @@ Diseño:
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from core.models import permissions as perms
 from core.models.descarga_reporte import DescargaReporte
@@ -80,6 +80,20 @@ class ReporteController:
             PermissionDeniedError: si el rol no tiene VIEW_EXPORT_HISTORY.
         """
         return self._reportes.list_historial_descargas(limit=limit)
+
+    @require_permission(perms.EXPORT_REPORTS)
+    def list_empleados_para_filtro(self) -> List[Tuple[int, str]]:
+        """Devuelve los empleados activos para poblar el filtro del export.
+
+        Protegido por ``EXPORT_REPORTS`` (no por ``VIEW_ATTENDANCE``)
+        porque este controller es la "puerta" del módulo de reportes
+        — un usuario REPORTES debe poder filtrar por empleado para
+        exportar sin tener acceso al módulo de Asistencia.
+
+        Raises:
+            PermissionDeniedError: si el rol no tiene EXPORT_REPORTS.
+        """
+        return self._reportes.list_empleados_para_filtro()
 
     # ── Writes ────────────────────────────────────────────────────────────
 

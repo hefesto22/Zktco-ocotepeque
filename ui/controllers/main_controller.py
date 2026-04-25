@@ -88,13 +88,14 @@ class MainController:
 
     @require_permission(perms.EXPORT_REPORTS)
     def open_reports(self) -> None:
-        """Abre la vista de reportes (SUPERADMIN / ADMIN / REPORTES)."""
-        self._open_view("reports")
+        """Abre la vista de reportes (SUPERADMIN / ADMIN / REPORTES).
 
-    @require_permission(perms.VIEW_EXPORT_HISTORY)
-    def open_export_history(self) -> None:
-        """Abre el historial de descargas (SUPERADMIN / ADMIN / REPORTES)."""
-        self._open_view("export_history")
+        La vista usa pestañas internas para "Exportar" e "Historial de
+        descargas"; no hay un punto de entrada separado al historial
+        — el tab se renderiza condicionalmente si la sesión tiene
+        ``VIEW_EXPORT_HISTORY``.
+        """
+        self._open_view("reports")
 
     # ── Mapa code → método ────────────────────────────────────────────────
 
@@ -116,7 +117,6 @@ class MainController:
             "zkteco_sync": self.open_zkteco_sync,
             "attendance": self.open_attendance,
             "reports": self.open_reports,
-            "export_history": self.open_export_history,
         }
         handler = handlers.get(code)
         if handler is None:

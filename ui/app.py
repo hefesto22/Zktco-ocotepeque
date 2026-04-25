@@ -82,6 +82,7 @@ from ui.controllers.configuracion_controller import ConfiguracionController
 from ui.controllers.empleados_controller import EmpleadosController
 from ui.controllers.login_controller import LoginController
 from ui.controllers.main_controller import MainController
+from ui.controllers.reporte_controller import ReporteController
 from ui.controllers.setup_controller import SetupController
 from ui.controllers.sincronizacion_controller import SincronizacionController
 from ui.controllers.turnos_controller import TurnosController
@@ -90,6 +91,7 @@ from ui.views.configuracion_view import ConfiguracionView
 from ui.views.empleados_view import EmpleadosView
 from ui.views.login_window import LoginFrame
 from ui.views.main_window import MainFrame, ViewFactory
+from ui.views.reportes_view import ReportesView
 from ui.views.setup_wizard_window import SetupWizardFrame
 from ui.views.sincronizacion_view import SincronizacionView
 from ui.views.turnos_view import TurnosView
@@ -423,6 +425,7 @@ class _Router:
             "employees": self._build_empleados_factory(session),
             "zkteco_sync": self._build_sincronizacion_factory(session),
             "attendance": self._build_asistencia_factory(session),
+            "reports": self._build_reportes_factory(session),
         }
 
         frame = MainFrame(
@@ -538,6 +541,26 @@ class _Router:
 
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
             return AsistenciaView(parent, controller=asistencia_controller)
+
+        return factory
+
+    def _build_reportes_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Reportes.
+
+        Misma forma que las demás factories — el ``ReporteController`` se
+        instancia una sola vez con la sesión y se reusa en cada montaje
+        de la vista. La vista usa pestañas internas para "Exportar" e
+        "Historial de descargas"; el tab de Historial se renderiza solo
+        si la sesión tiene ``VIEW_EXPORT_HISTORY``.
+        """
+        reportes_controller = ReporteController(
+            session=session,
+            permission_service=self._services.permission,
+            reporte_service=self._services.reporte,
+        )
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return ReportesView(parent, controller=reportes_controller)
 
         return factory
 

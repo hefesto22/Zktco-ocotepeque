@@ -22,7 +22,12 @@ def _session_con(role_code: str, perms_set: set[str]) -> Session:
 
 
 def test_superadmin_ve_todas_las_entradas() -> None:
-    """SUPERADMIN tiene los 7 permisos → ve las 8 entradas del catálogo."""
+    """SUPERADMIN tiene los 7 permisos → ve las 7 entradas del catálogo.
+
+    Tras Sub-3.5b el menú colapsó "Reportes" e "Historial de descargas"
+    en una sola entrada con pestañas internas, así que el catálogo
+    pasó de 8 a 7 items.
+    """
     session = _session_con(perms.ROLE_SUPERADMIN, set(perms.ALL_PERMISSIONS))
     visibles = filter_visible(MENU_ITEMS, session)
     assert len(visibles) == len(MENU_ITEMS)
@@ -39,14 +44,20 @@ def test_operador_solo_ve_sync_y_asistencia() -> None:
     assert codes == {"zkteco_sync", "attendance"}
 
 
-def test_reportes_solo_ve_reportes_e_historial() -> None:
+def test_reportes_solo_ve_reportes() -> None:
+    """REPORTES solo ve la entrada 'Reportes' del menú.
+
+    El historial vive como pestaña interna de la misma vista — la
+    sesión necesita VIEW_EXPORT_HISTORY para que la pestaña aparezca,
+    pero el menú lateral solo muestra una entrada.
+    """
     session = _session_con(
         perms.ROLE_REPORTES,
         {perms.EXPORT_REPORTS, perms.VIEW_EXPORT_HISTORY},
     )
     visibles = filter_visible(MENU_ITEMS, session)
     codes = {m.code for m in visibles}
-    assert codes == {"reports", "export_history"}
+    assert codes == {"reports"}
 
 
 def test_admin_no_ve_usuarios_y_roles() -> None:
@@ -56,8 +67,8 @@ def test_admin_no_ve_usuarios_y_roles() -> None:
     visibles = filter_visible(MENU_ITEMS, session)
     codes = {m.code for m in visibles}
     assert "users" not in codes
-    # Debe ver los otros 7 códigos (8 items, con "users" y "shifts"
-    # compartiendo permiso manage_employees; 8 - 1 = 7).
+    # Debe ver los otros 6 códigos (7 items totales en el menú; "users"
+    # queda fuera; "shifts" sigue visible por compartir manage_employees).
     assert len(visibles) == len(MENU_ITEMS) - 1
 
 

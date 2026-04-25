@@ -87,10 +87,4 @@ MENU_ITEMS: Final[Tuple[MenuItem, ...]] = (
         permission=perms.EXPORT_REPORTS,
         description="Generación y descarga de reportes Excel.",
     ),
-    MenuItem(
-        code="export_history",
-        label="Historial de descargas",
-        permission=perms.VIEW_EXPORT_HISTORY,
-        description="Auditoría de reportes descargados.",
-    ),
 )
