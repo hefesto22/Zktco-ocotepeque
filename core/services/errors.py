@@ -11,6 +11,8 @@ al usuario final. Los mensajes de login son genéricos por seguridad
 
 from __future__ import annotations
 
+from typing import Optional
+
 
 class AuthError(Exception):
     """Clase base para errores de autenticación."""
@@ -405,3 +407,56 @@ class AsistenciaNotFoundError(AsistenciaError):
     def __init__(self, asistencia_id: int) -> None:
         super().__init__(f"No se encontró la asistencia con id {asistencia_id}.")
         self.asistencia_id = asistencia_id
+
+
+# ── Errores de reportes (Fase 3.5) ────────────────────────────────────────────
+
+
+class ReporteError(Exception):
+    """Clase base para errores de ``ReporteService``."""
+
+
+class ReporteIOError(ReporteError):
+    """No se pudo escribir el archivo de reporte en disco.
+
+    Causas típicas: permisos insuficientes, disco lleno, ruta inválida,
+    archivo abierto en otro programa (Excel mantiene un lock).
+
+    Attributes:
+        ruta: Ruta que se intentó usar.
+        causa: Mensaje original del SO traducido al español cuando es
+            posible. Seguro de mostrar al usuario.
+    """
+
+    def __init__(self, ruta: str, causa: str) -> None:
+        super().__init__(
+            f"No se pudo escribir el archivo en '{ruta}': {causa}. "
+            "Verifique que la ruta sea válida y que el archivo no esté "
+            "abierto en otro programa."
+        )
+        self.ruta = ruta
+        self.causa = causa
+
+
+class ReporteSinDatosError(ReporteError):
+    """El rango/filtro pedido no contiene asistencias para exportar.
+
+    Decisión de diseño: NO generamos un Excel vacío. Si la query no
+    devuelve filas, el servicio levanta este error y la UI muestra el
+    mensaje sin escribir nada en disco ni registrar historial.
+    """
+
+    def __init__(self, desde: str, hasta: str, empleado_id: Optional[int]) -> None:
+        if empleado_id is None:
+            mensaje = (
+                f"No hay asistencias registradas entre {desde} y {hasta}. " "No se generó archivo."
+            )
+        else:
+            mensaje = (
+                f"No hay asistencias del empleado seleccionado entre "
+                f"{desde} y {hasta}. No se generó archivo."
+            )
+        super().__init__(mensaje)
+        self.desde = desde
+        self.hasta = hasta
+        self.empleado_id = empleado_id

@@ -173,6 +173,76 @@ class AsistenciaService:
         ]
         return ResultadoBusquedaAsistencia(items=items, truncado=truncado)
 
+    def contar_asistencias_para_reporte(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int] = None,
+    ) -> int:
+        """Cuenta filas que devolverá ``list_asistencias_para_reporte``.
+
+        Pensado para que la UI muestre una confirmación previa al export
+        cuando el rango es grande, sin tener que materializar la lista.
+
+        Args:
+            desde: ISO ``YYYY-MM-DD``. Inclusivo.
+            hasta: ISO ``YYYY-MM-DD``. Inclusivo.
+            empleado_id: Si se pasa, cuenta solo filas de ese empleado.
+
+        Returns:
+            Conteo entero >= 0.
+        """
+        return self._asist_read.count_by_rango(desde=desde, hasta=hasta, empleado_id=empleado_id)
+
+    def list_asistencias_para_reporte(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int] = None,
+    ) -> List[AsistenciaVista]:
+        """Lista TODAS las asistencias del rango (sin truncamiento).
+
+        Igual a ``list_asistencias`` pero sin la lógica de ``limit+1``
+        ni ``DEFAULT_LIMIT``: el caller (``ReporteService``) necesita
+        materializar el rango completo para escribirlo a Excel. La UI
+        presenta un conteo previo (``count_by_rango``) para que el
+        usuario confirme exportes muy grandes.
+
+        Args:
+            desde: ISO ``YYYY-MM-DD``. Inclusivo.
+            hasta: ISO ``YYYY-MM-DD``. Inclusivo.
+            empleado_id: Si se pasa, filtra al empleado indicado.
+                ``None`` devuelve las asistencias de todos.
+
+        Returns:
+            Lista de ``AsistenciaVista`` enriquecidas, ordenadas por
+            (fecha asc, empleado_id asc) si no hay filtro o
+            (fecha asc) si hay filtro de empleado.
+        """
+        if empleado_id is not None:
+            filas = self._asist_read.list_by_empleado_y_rango(empleado_id, desde, hasta, limit=None)
+        else:
+            filas = self._asist_read.list_by_rango(desde, hasta, limit=None)
+
+        nombres_empleados, dnis_empleados = self._mapear_empleados(filas)
+        nombres_turnos = self._mapear_turnos(filas)
+
+        return [
+            AsistenciaVista(
+                asistencia=a,
+                empleado_nombre_completo=nombres_empleados.get(
+                    a.empleado_id, "(empleado eliminado)"
+                ),
+                empleado_dni=dnis_empleados.get(a.empleado_id),
+                turno_nombre=(
+                    nombres_turnos.get(a.turno_id_aplicado)
+                    if a.turno_id_aplicado is not None
+                    else None
+                ),
+            )
+            for a in filas
+        ]
+
     def list_empleados_para_filtro(self) -> List[Tuple[int, str]]:
         """Devuelve ``[(empleado_id, "apellidos nombres")]`` para el combo.
 

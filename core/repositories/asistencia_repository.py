@@ -95,6 +95,29 @@ class IAsistenciaReadRepository(ABC):
                 ``None`` trae todas las filas.
         """
 
+    @abstractmethod
+    def count_by_rango(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int] = None,
+    ) -> int:
+        """Cuenta asistencias en un rango (opcionalmente filtrado por empleado).
+
+        Pensado para que la UI de reportes muestre una confirmación
+        previa al export ("Esto generará ~7800 filas, ¿continuar?")
+        sin tener que materializar el resultado completo en memoria.
+
+        Args:
+            desde: ISO ``YYYY-MM-DD``. Límite inferior inclusivo.
+            hasta: ISO ``YYYY-MM-DD``. Límite superior inclusivo.
+            empleado_id: Si se pasa, cuenta solo las filas de ese
+                empleado. ``None`` cuenta todas las del rango.
+
+        Returns:
+            Conteo entero >= 0.
+        """
+
 
 class IAsistenciaWriteRepository(ABC):
     """Operaciones de escritura sobre la tabla ``asistencias``.

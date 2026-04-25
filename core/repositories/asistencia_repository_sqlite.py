@@ -111,6 +111,22 @@ class AsistenciaRepositorySQLite(IAsistenciaReadRepository, IAsistenciaWriteRepo
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_asistencia(r) for r in rows]
 
+    def count_by_rango(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int] = None,
+    ) -> int:
+        sql = "SELECT COUNT(*) AS total FROM asistencias " "WHERE fecha >= ? AND fecha <= ?"
+        params: tuple[object, ...] = (desde, hasta)
+        if empleado_id is not None:
+            sql += " AND empleado_id = ?"
+            params = params + (empleado_id,)
+        with self._db.transaction() as conn:
+            row: Optional[sqlite3.Row] = conn.execute(sql, params).fetchone()
+        # COUNT(*) siempre devuelve una fila — defensa por si SQLite cambia.
+        return int(row["total"]) if row is not None else 0
+
     # ── Write ─────────────────────────────────────────────────────────────
 
     def upsert(self, asistencia: Asistencia) -> Asistencia:

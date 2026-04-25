@@ -33,6 +33,9 @@ from core.models.usuario import Usuario
 from core.repositories.asistencia_repository_sqlite import AsistenciaRepositorySQLite
 from core.repositories.audit_log_repository_sqlite import AuditLogRepositorySQLite
 from core.repositories.cargo_repository_sqlite import CargoRepositorySQLite
+from core.repositories.descarga_reporte_repository_sqlite import (
+    DescargaReporteRepositorySQLite,
+)
 from core.repositories.departamento_repository_sqlite import (
     DepartamentoRepositorySQLite,
 )
@@ -63,12 +66,14 @@ from core.services.consolidacion_service import ConsolidacionService
 from core.services.empleado_service import EmpleadoService
 from core.services.password_policy import PasswordPolicy
 from core.services.permission_service import PermissionService
+from core.services.reporte_service import ReporteService
 from core.services.session import Session
 from core.services.setup_wizard_service import SetupWizardService
 from core.services.sincronizacion_service import SincronizacionService
 from core.services.turno_service import TurnoService
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
+from infrastructure.exporters.xlsx_asistencia_exporter import XlsxAsistenciaExporter
 from infrastructure.security.bcrypt_hasher import BcryptHasher
 from infrastructure.zkteco.pyzk_adapter import PyzkAdapter
 from ui.async_util import run_async_ui
@@ -108,6 +113,7 @@ class _Services:
         empleado: EmpleadoService,
         sincronizacion: SincronizacionService,
         asistencia: AsistenciaService,
+        reporte: ReporteService,
         dispositivo_read: IDispositivoReadRepository,
         sincronizacion_read: ISincronizacionReadRepository,
     ) -> None:
@@ -119,6 +125,7 @@ class _Services:
         self.empleado = empleado
         self.sincronizacion = sincronizacion
         self.asistencia = asistencia
+        self.reporte = reporte
         self.dispositivo_read = dispositivo_read
         self.sincronizacion_read = sincronizacion_read
 
@@ -203,10 +210,12 @@ def _build_services(database: Database) -> _Services:
     registro_raw_repo = RegistroRawRepositorySQLite(database)
     asistencia_repo = AsistenciaRepositorySQLite(database)
     feriado_repo = FeriadoRepositorySQLite(database)
+    descarga_reporte_repo = DescargaReporteRepositorySQLite(database)
 
     hasher = BcryptHasher(config.BCRYPT_COST_FACTOR)
     audit_logger = AuditLogger(audit_repo)
     zkteco_adapter = PyzkAdapter()
+    xlsx_exporter = XlsxAsistenciaExporter()
 
     password_policy = PasswordPolicy(
         min_length=config.MIN_PASSWORD_LENGTH,
@@ -288,6 +297,14 @@ def _build_services(database: Database) -> _Services:
         consolidacion_service=consolidacion_service,
     )
 
+    reporte_service = ReporteService(
+        asistencia_service=asistencia_service,
+        descarga_read=descarga_reporte_repo,
+        descarga_write=descarga_reporte_repo,
+        exporter=xlsx_exporter,
+        audit_logger=audit_logger,
+    )
+
     return _Services(
         auth=auth_service,
         permission=PermissionService(),
@@ -297,6 +314,7 @@ def _build_services(database: Database) -> _Services:
         empleado=empleado_service,
         sincronizacion=sincronizacion_service,
         asistencia=asistencia_service,
+        reporte=reporte_service,
         dispositivo_read=dispositivo_repo,
         sincronizacion_read=sincronizacion_repo,
     )
