@@ -47,7 +47,9 @@ from core.repositories.asistencia_repository import (
 from core.repositories.empleado_repository import IEmpleadoReadRepository
 from core.repositories.turno_repository import ITurnoReadRepository
 from core.services.audit_logger import AuditLogger
+from core.services.consolidacion_service import ConsolidacionService
 from core.services.errors import AsistenciaNotFoundError
+from core.services.sincronizacion_result import ResultadoConsolidacion
 
 
 @dataclass
@@ -109,13 +111,15 @@ class AsistenciaService:
         empleado_read: IEmpleadoReadRepository,
         turno_read: ITurnoReadRepository,
         audit_logger: AuditLogger,
+        consolidacion_service: ConsolidacionService,
     ) -> None:
-        """Inicializa el servicio con sus 5 dependencias inyectadas."""
+        """Inicializa el servicio con sus 6 dependencias inyectadas."""
         self._asist_read = asistencia_read
         self._asist_write = asistencia_write
         self._emp_read = empleado_read
         self._turno_read = turno_read
         self._audit = audit_logger
+        self._consolidacion = consolidacion_service
         self._log = logging.getLogger(self.__class__.__name__)
 
     # ── Reads ─────────────────────────────────────────────────────────────
@@ -184,6 +188,55 @@ class AsistenciaService:
         return tuplas
 
     # ── Writes ────────────────────────────────────────────────────────────
+
+    def re_consolidar(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int],
+        actor_user_id: int,
+    ) -> ResultadoConsolidacion:
+        """Re-consolida un rango (opcionalmente filtrado por empleado).
+
+        Delega a ``ConsolidacionService.consolidar_rango`` y registra la
+        acción del usuario en ``audit_log`` con el id del actor (el
+        servicio de consolidación ya audita el hecho técnico, pero sin
+        actor porque también lo dispara el scheduler — acá capturamos
+        quién pidió el trigger manual desde la UI).
+
+        Args:
+            desde: ISO ``YYYY-MM-DD`` inclusivo.
+            hasta: ISO ``YYYY-MM-DD`` inclusivo, >= desde.
+            empleado_id: ``None`` = todos los activos; un id = solo ese
+                empleado (debe estar activo).
+            actor_user_id: Usuario que disparó la re-consolidación.
+
+        Returns:
+            ``ResultadoConsolidacion`` del servicio subyacente.
+
+        Raises:
+            InvalidRangoError, InvalidDateError, EmpleadoNotFoundError:
+                propagadas desde ``ConsolidacionService``.
+        """
+        resultado = self._consolidacion.consolidar_rango(desde, hasta, empleado_id)
+        self._audit.log(
+            action="asistencia_re_consolidada",
+            user_id=actor_user_id,
+            details=(
+                f'{{"desde": "{desde}", "hasta": "{hasta}", '
+                f'"empleado_id": {empleado_id if empleado_id is not None else "null"}, '
+                f'"asistencias_upsertadas": {resultado.asistencias_upsertadas}}}'
+            ),
+        )
+        self._log.info(
+            "Re-consolidación manual: desde=%s hasta=%s empleado_id=%s actor=%s upsertadas=%s",
+            desde,
+            hasta,
+            empleado_id,
+            actor_user_id,
+            resultado.asistencias_upsertadas,
+        )
+        return resultado
 
     def update_observaciones(
         self,

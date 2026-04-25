@@ -1,8 +1,12 @@
-"""Vista de Asistencia (Sub-3.4b).
+"""Vista de Asistencia (Sub-3.4b + Sub-3.4c).
 
 Permite al usuario (OPERADOR o rol superior con ``VIEW_ATTENDANCE``)
 consultar las asistencias consolidadas en un rango de fechas, filtrar
-por empleado y editar la observación manual de cada fila.
+por empleado y editar la observación manual de cada fila. Los roles
+con ``RUN_ZKTECO_SYNC`` (OPERADOR, ADMIN, SUPERADMIN) ven además el
+botón "Re-consolidar" para regenerar manualmente las asistencias del
+rango tras editar turnos o feriados — respeta el filtro de empleado
+activo y pide confirmación explícita antes de ejecutar.
 
 Diseño visual:
 
@@ -42,7 +46,13 @@ from tkcalendar import DateEntry
 
 from core.models.asistencia import EstadoAsistencia
 from core.services.asistencia_service import AsistenciaVista, ResultadoBusquedaAsistencia
-from core.services.errors import AsistenciaNotFoundError
+from core.services.errors import (
+    AsistenciaNotFoundError,
+    EmpleadoNotFoundError,
+    InvalidDateError,
+    InvalidRangoError,
+)
+from core.services.sincronizacion_result import ResultadoConsolidacion
 from ui.async_util import run_async_ui
 from ui.components.observacion_dialog import ObservacionDialog
 from ui.controllers.asistencia_controller import AsistenciaController
@@ -196,7 +206,25 @@ class AsistenciaView(ctk.CTkFrame):
             height=32,
             width=120,
         )
-        self._btn_cargar.grid(row=0, column=6, sticky="e", padx=12, pady=pad_y)
+        self._btn_cargar.grid(row=0, column=6, sticky="e", padx=(12, 6), pady=pad_y)
+
+        # Botón de re-consolidación manual: solo visible si el rol
+        # tiene ``RUN_ZKTECO_SYNC`` (OPERADOR, ADMIN, SUPERADMIN).
+        # Visualmente secundario al Cargar — estilo outline gris para
+        # dejar claro que es una acción "distinta" (regenera datos).
+        self._btn_re_consolidar: Optional[ctk.CTkButton] = None
+        if self._controller.puede_re_consolidar():
+            self._btn_re_consolidar = ctk.CTkButton(
+                form,
+                text="Re-consolidar",
+                command=self._on_re_consolidar,
+                height=32,
+                width=130,
+                fg_color=("gray75", "gray30"),
+                hover_color=("gray65", "gray40"),
+                text_color=("gray10", "gray90"),
+            )
+            self._btn_re_consolidar.grid(row=0, column=7, sticky="e", padx=(0, 12), pady=pad_y)
 
         self._inicializar_rango_default()
         return form
@@ -585,6 +613,122 @@ class AsistenciaView(ctk.CTkFrame):
         if not extras:
             return label_base
         return f"{label_base} ({', '.join(extras)})"
+
+    # ── Handler del botón "Re-consolidar" ─────────────────────────────────
+
+    def _on_re_consolidar(self) -> None:
+        """Pide confirmación y dispara la re-consolidación del rango.
+
+        Respeta el filtro de empleado activo en el combo: si hay un
+        empleado seleccionado, solo se re-consolida ese empleado; si
+        está en "(Todos los empleados)", se re-consolidan todos los
+        activos del rango.
+        """
+        desde = self._date_desde.get_date().isoformat()
+        hasta = self._date_hasta.get_date().isoformat()
+        empleado_id = self._empleado_id_por_label.get(self._combo_empleado.get())
+        label_combo = self._combo_empleado.get()
+
+        if desde > hasta:
+            messagebox.showwarning(
+                "Rango inválido",
+                "La fecha 'Desde' no puede ser posterior a 'Hasta'.",
+            )
+            return
+
+        if not self._confirmar_re_consolidacion(desde, hasta, label_combo, empleado_id):
+            return
+
+        self._bloquear_re_consolidar()
+        run_async_ui(
+            self,
+            work=lambda: self._controller.re_consolidar(
+                desde=desde, hasta=hasta, empleado_id=empleado_id
+            ),
+            on_success=self._on_re_consolidar_ok,
+            on_error=self._on_re_consolidar_err,
+        )
+
+    def _confirmar_re_consolidacion(
+        self,
+        desde: str,
+        hasta: str,
+        label_combo: str,
+        empleado_id: Optional[int],
+    ) -> bool:
+        """Muestra un messagebox de confirmación antes de ejecutar."""
+        alcance = (
+            f"el empleado seleccionado ({label_combo})"
+            if empleado_id is not None
+            else "todos los empleados activos"
+        )
+        mensaje = (
+            f"Se regenerarán las asistencias del {desde} al {hasta} "
+            f"para {alcance}.\n\n"
+            "Las observaciones manuales se conservan. "
+            "¿Confirma la re-consolidación?"
+        )
+        return messagebox.askyesno("Confirmar re-consolidación", mensaje)
+
+    def _bloquear_re_consolidar(self) -> None:
+        """Deshabilita ambos botones y actualiza el status durante la operación."""
+        self._btn_cargar.configure(state="disabled")
+        if self._btn_re_consolidar is not None:
+            self._btn_re_consolidar.configure(state="disabled", text="Re-consolidando...")
+        self._spinner.grid(row=0, column=1, sticky="e", padx=12)
+        self._spinner.start()
+        self._status_label.configure(
+            text="Re-consolidando asistencias...",
+            text_color=("gray20", "gray80"),
+        )
+
+    def _desbloquear_re_consolidar(self) -> None:
+        """Revierte el estado tras terminar la re-consolidación."""
+        self._spinner.stop()
+        self._spinner.grid_forget()
+        self._btn_cargar.configure(state="normal")
+        if self._btn_re_consolidar is not None:
+            self._btn_re_consolidar.configure(state="normal", text="Re-consolidar")
+
+    def _on_re_consolidar_ok(self, resultado: ResultadoConsolidacion) -> None:
+        """Callback en UI thread: muestra resumen y recarga la tabla."""
+        self._desbloquear_re_consolidar()
+        self._status_label.configure(
+            text=(
+                f"Re-consolidación OK: {resultado.asistencias_upsertadas} "
+                f"asistencia(s) procesada(s) en {resultado.dias_procesados} día(s)."
+            ),
+            text_color=("#1b5e20", "#a5d6a7"),
+        )
+        # Recargamos la tabla para que muestre los datos frescos.
+        self._on_cargar()
+
+    def _on_re_consolidar_err(self, exc: BaseException) -> None:
+        """Callback en UI thread tras un fallo de la re-consolidación."""
+        self._desbloquear_re_consolidar()
+        self._log.exception("Error re-consolidando", exc_info=exc)
+        titulo, mensaje = self._mensaje_error_re_consolidar(exc)
+        self._status_label.configure(
+            text="Error: no se pudo re-consolidar.",
+            text_color=("#b71c1c", "#ef9a9a"),
+        )
+        messagebox.showerror(titulo, mensaje)
+
+    @staticmethod
+    def _mensaje_error_re_consolidar(exc: BaseException) -> Tuple[str, str]:
+        """Traduce excepción de dominio a (título, mensaje) para el usuario."""
+        if isinstance(exc, (InvalidRangoError, InvalidDateError)):
+            return ("Rango inválido", str(exc))
+        if isinstance(exc, EmpleadoNotFoundError):
+            return (
+                "Empleado no válido",
+                "El empleado seleccionado no está activo. " "Recargue la lista de empleados.",
+            )
+        return (
+            "Error al re-consolidar",
+            "Ocurrió un error inesperado durante la re-consolidación. "
+            "Revise el log para detalles.",
+        )
 
     # ── Handler del botón "Editar obs." ───────────────────────────────────
 

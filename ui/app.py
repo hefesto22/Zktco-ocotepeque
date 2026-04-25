@@ -285,6 +285,7 @@ def _build_services(database: Database) -> _Services:
         empleado_read=empleado_repo,
         turno_read=turno_repo,
         audit_logger=audit_logger,
+        consolidacion_service=consolidacion_service,
     )
 
     return _Services(

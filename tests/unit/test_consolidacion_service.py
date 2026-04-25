@@ -74,7 +74,7 @@ from core.repositories.sincronizacion_repository_sqlite import (
 )
 from core.repositories.turno_repository_sqlite import TurnoRepositorySQLite
 from core.services.consolidacion_service import ConsolidacionService
-from core.services.errors import InvalidDateError, InvalidRangoError
+from core.services.errors import EmpleadoNotFoundError, InvalidDateError, InvalidRangoError
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from tests.unit.test_audit_logger import FakeAuditRepo
@@ -794,3 +794,62 @@ def test_rango_multi_dia_genera_una_asistencia_por_dia(setup: _Ctx) -> None:
         ("2026-04-14", EstadoAsistencia.PRESENTE.value),
         ("2026-04-15", EstadoAsistencia.AUSENTE.value),
     ]
+
+
+# ── Tests: re-consolidación filtrada por empleado (Sub-3.4c) ──────────────────
+
+
+def test_consolidar_rango_filtrado_por_empleado_solo_procesa_ese(
+    setup: _Ctx,
+) -> None:
+    """Pasar ``empleado_id`` restringe la consolidación a ese empleado."""
+    emp_a = _crear_empleado(setup, "Ana", "Zapata", zkteco_id=701, indice=20)
+    emp_b = _crear_empleado(setup, "Bruno", "Alvarado", zkteco_id=702, indice=21)
+    _asignar_turno(setup, emp_a, setup.turno_diurno_id)
+    _asignar_turno(setup, emp_b, setup.turno_diurno_id)
+    _insertar_raws(
+        setup,
+        [
+            _raw(setup, 701, "2026-04-15T08:00:00", TipoMarcada.CHECK_IN.value),
+            _raw(setup, 701, "2026-04-15T17:00:00", TipoMarcada.CHECK_OUT.value),
+            _raw(setup, 702, "2026-04-15T08:00:00", TipoMarcada.CHECK_IN.value),
+            _raw(setup, 702, "2026-04-15T17:00:00", TipoMarcada.CHECK_OUT.value),
+        ],
+    )
+
+    resultado = setup.service.consolidar_rango("2026-04-15", "2026-04-15", empleado_id=emp_a)
+
+    # Solo procesó 1 empleado (el A) y generó 1 asistencia (la de A).
+    assert resultado.empleados_procesados == 1
+    assert resultado.asistencias_upsertadas == 1
+    # Emp A quedó consolidado.
+    assert setup.asistencia_repo.get_by_empleado_y_fecha(emp_a, "2026-04-15") is not None
+    # Emp B NO fue tocado (no hay fila consolidada para él).
+    assert setup.asistencia_repo.get_by_empleado_y_fecha(emp_b, "2026-04-15") is None
+    # Marcadas desconocidas se omiten cuando hay filtro por empleado
+    # (sino las raws de emp B aparecerían como "desconocidas").
+    assert resultado.marcadas_desconocidas == []
+    # La auditoría registra el ``empleado_id`` en los detalles.
+    detalles = json.loads(setup.audit_repo.entradas[-1].details or "{}")
+    assert detalles["empleado_id"] == emp_a
+
+
+def test_consolidar_rango_filtrado_empleado_archivado_levanta_not_found(
+    setup: _Ctx,
+) -> None:
+    """Si el ``empleado_id`` no está activo → EmpleadoNotFoundError."""
+    emp_archivado = _crear_empleado(setup, "Archivo", "X", zkteco_id=703, indice=22)
+    _asignar_turno(setup, emp_archivado, setup.turno_diurno_id)
+    setup.empleado_turno_repo.cerrar_vigente(emp_archivado, "2026-04-10")
+    setup.empleado_repo.deactivate(
+        emp_archivado,
+        fecha_baja="2026-04-10",
+        motivo_baja="RENUNCIA",
+        nota_baja=None,
+    )
+
+    with pytest.raises(EmpleadoNotFoundError) as exc_info:
+        setup.service.consolidar_rango("2026-04-15", "2026-04-15", empleado_id=emp_archivado)
+    assert exc_info.value.empleado_id == emp_archivado
+    # No emite auditoría si la validación falla antes de procesar.
+    assert setup.audit_repo.entradas == []

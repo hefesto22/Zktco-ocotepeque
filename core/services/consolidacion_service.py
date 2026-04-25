@@ -64,7 +64,7 @@ from core.services.consolidacion_algorithm import (
     resolver_turno_en_fecha,
     ventana_del_dia,
 )
-from core.services.errors import InvalidRangoError
+from core.services.errors import EmpleadoNotFoundError, InvalidRangoError
 from core.services.sincronizacion_result import MarcadaDesconocida, ResultadoConsolidacion
 from core.services.validators import validate_fecha_iso
 
@@ -109,25 +109,36 @@ class ConsolidacionService:
 
     # ── API pública ──────────────────────────────────────────────────────────
 
-    def consolidar_rango(self, desde: str, hasta: str) -> ResultadoConsolidacion:
-        """Consolida raw → asistencias para todo empleado activo en el rango.
+    def consolidar_rango(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int] = None,
+    ) -> ResultadoConsolidacion:
+        """Consolida raw → asistencias en el rango, opcionalmente por empleado.
 
         Proceso:
 
             1. Valida el rango y lo convierte a ``date``.
             2. Pre-carga: empleados activos, turnos, feriados, raws del
                rango extendido (+1 día para salidas nocturnas).
-            3. Construye el mapeo ``zkteco_id → empleado`` y agrupa raws
+            3. Si se pasa ``empleado_id``, restringe el set a ese
+               empleado (debe estar activo) — re-consolidación manual.
+            4. Construye el mapeo ``zkteco_id → empleado`` y agrupa raws
                por ``zkteco_user_id``.
-            4. Detecta raws de IDs no mapeados → ``marcadas_desconocidas``.
-            5. Para cada empleado × cada día del rango: consolida y upserta.
-            6. Errores a nivel empleado-día se capturan en
+            5. Detecta raws de IDs no mapeados → ``marcadas_desconocidas``
+               (solo en consolidación global; omitido cuando hay filtro
+               por empleado porque sería una métrica engañosa).
+            6. Para cada empleado × cada día del rango: consolida y upserta.
+            7. Errores a nivel empleado-día se capturan en
                ``errores_empleado`` y se continúa con el resto.
-            7. Audita el rango consolidado.
+            8. Audita el rango consolidado (incluye ``empleado_id``).
 
         Args:
             desde: ISO ``"YYYY-MM-DD"``.
             hasta: ISO ``"YYYY-MM-DD"`` (inclusivo, >= desde).
+            empleado_id: Si se pasa, re-consolida solo a ese empleado
+                (debe estar activo). ``None`` = todos los activos.
 
         Returns:
             ``ResultadoConsolidacion`` con el resumen numérico + warnings.
@@ -135,18 +146,21 @@ class ConsolidacionService:
         Raises:
             InvalidRangoError: rango invertido.
             InvalidDateError: formato inválido.
+            EmpleadoNotFoundError: ``empleado_id`` no está entre los
+                empleados activos (no existe o está archivado).
         """
         desde_date, hasta_date = self._validar_y_parsear_rango(desde, hasta)
 
         empleados_activos = self._empleado_read.list_active()
+        if empleado_id is not None:
+            empleados_activos = self._filtrar_empleado(empleados_activos, empleado_id)
         turnos_por_id = self._cargar_turnos()
         feriados_set = self._cargar_feriados(desde, hasta)
         raws_por_zkteco = self._cargar_raws_agrupados(desde_date, hasta_date)
 
-        empleados_por_zkteco = {
-            emp.zkteco_id: emp for emp in empleados_activos if emp.zkteco_id is not None
-        }
-        marcadas_desconocidas = self._detectar_desconocidos(raws_por_zkteco, empleados_por_zkteco)
+        marcadas_desconocidas = self._calcular_desconocidas(
+            raws_por_zkteco, empleados_activos, filtrado=empleado_id is not None
+        )
 
         resultado = ResultadoConsolidacion(
             empleados_procesados=len(empleados_activos),
@@ -172,6 +186,7 @@ class ConsolidacionService:
                 {
                     "desde": desde,
                     "hasta": hasta,
+                    "empleado_id": empleado_id,
                     "asistencias_upsertadas": resultado.asistencias_upsertadas,
                     "empleados_procesados": resultado.empleados_procesados,
                     "desconocidos": len(resultado.marcadas_desconocidas),
@@ -227,6 +242,27 @@ class ConsolidacionService:
             agrupados[raw.zkteco_user_id].append(raw)
         return agrupados
 
+    def _calcular_desconocidas(
+        self,
+        raws_por_zkteco: Dict[int, List[RegistroRaw]],
+        empleados_activos: List[Empleado],
+        filtrado: bool,
+    ) -> List[MarcadaDesconocida]:
+        """Calcula ``marcadas_desconocidas`` considerando si hay filtro.
+
+        Cuando la consolidación se filtra a un solo empleado (caso
+        re-consolidación manual), esta métrica se omite: devolverla
+        con los raws de "todos los demás empleados" sería engañoso
+        para la UI — el usuario solo quiere saber qué pasó con el
+        empleado filtrado.
+        """
+        if filtrado:
+            return []
+        empleados_por_zkteco = {
+            emp.zkteco_id: emp for emp in empleados_activos if emp.zkteco_id is not None
+        }
+        return self._detectar_desconocidos(raws_por_zkteco, empleados_por_zkteco)
+
     def _detectar_desconocidos(
         self,
         raws_por_zkteco: Dict[int, List[RegistroRaw]],
@@ -245,6 +281,18 @@ class ConsolidacionService:
             )
         desconocidos.sort(key=lambda m: m.zkteco_user_id)
         return desconocidos
+
+    @staticmethod
+    def _filtrar_empleado(empleados: List[Empleado], empleado_id: int) -> List[Empleado]:
+        """Reduce la lista al empleado indicado (debe estar activo).
+
+        Raises:
+            EmpleadoNotFoundError: si el id no está entre los activos.
+        """
+        filtrados = [emp for emp in empleados if emp.id == empleado_id]
+        if not filtrados:
+            raise EmpleadoNotFoundError(empleado_id)
+        return filtrados
 
     # ── Helpers de consolidación por empleado ────────────────────────────────
 

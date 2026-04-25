@@ -1,4 +1,4 @@
-"""Tests del AsistenciaController (Sub-3.4b).
+"""Tests del AsistenciaController (Sub-3.4b + Sub-3.4c).
 
 El controller es un wrapper delgado sobre ``AsistenciaService`` — aquí
 validamos que cada método:
@@ -7,8 +7,9 @@ validamos que cada método:
     2. Inyecta ``actor_user_id`` desde ``self.session.user_id`` al
        escribir (el caller de la vista no debe conocer el user id).
     3. Está protegido por ``@require_permission(VIEW_ATTENDANCE)`` —
-       sin ese permiso lanza ``PermissionDeniedError`` sin tocar el
-       service, incluso con otros permisos válidos del sistema.
+       o ``RUN_ZKTECO_SYNC`` en el caso de ``re_consolidar`` — sin ese
+       permiso lanza ``PermissionDeniedError`` sin tocar el service,
+       incluso con otros permisos válidos del sistema.
 
 Usamos un stub manual (sin MagicMock) para mantener el test legible,
 alineado con ``test_empleados_controller`` y ``test_turnos_controller``.
@@ -29,6 +30,7 @@ from core.services.asistencia_service import (
 from core.services.errors import AsistenciaNotFoundError, PermissionDeniedError
 from core.services.permission_service import PermissionService
 from core.services.session import Session
+from core.services.sincronizacion_result import ResultadoConsolidacion
 from ui.controllers.asistencia_controller import AsistenciaController
 
 
@@ -67,6 +69,13 @@ class _StubAsistenciaService:
         self.list_result = ResultadoBusquedaAsistencia(items=[_vista()], truncado=False)
         self.empleados_result: List[Tuple[int, str]] = [(1, "Pérez Juan")]
         self.update_raises: Optional[Exception] = None
+        self.re_consolidar_raises: Optional[Exception] = None
+        self.re_consolidar_result = ResultadoConsolidacion(
+            empleados_procesados=1,
+            dias_procesados=3,
+            asistencias_upsertadas=3,
+            marcadas_desconocidas=[],
+        )
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append((name, args, kwargs))
@@ -105,6 +114,24 @@ class _StubAsistenciaService:
         )
         if self.update_raises is not None:
             raise self.update_raises
+
+    def re_consolidar(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int],
+        actor_user_id: int,
+    ) -> ResultadoConsolidacion:
+        self._record(
+            "re_consolidar",
+            desde=desde,
+            hasta=hasta,
+            empleado_id=empleado_id,
+            actor_user_id=actor_user_id,
+        )
+        if self.re_consolidar_raises is not None:
+            raise self.re_consolidar_raises
+        return self.re_consolidar_result
 
 
 # ── Fábricas de controller + session ────────────────────────────────────────
@@ -219,3 +246,51 @@ def test_sin_permiso_update_observaciones_lanza_denied() -> None:
     with pytest.raises(PermissionDeniedError):
         ctrl.update_observaciones(1, "X")
     assert stub.calls == []
+
+
+# ── re_consolidar / puede_re_consolidar (Sub-3.4c) ──────────────────────────
+
+
+def test_re_consolidar_delega_e_inyecta_actor() -> None:
+    """Delega al service con empleado_id + ``actor_user_id`` desde la sesión."""
+    ctrl, stub = _controller({perms.RUN_ZKTECO_SYNC}, user_id=55)
+    resultado = ctrl.re_consolidar(desde="2026-04-13", hasta="2026-04-15", empleado_id=7)
+    assert resultado.asistencias_upsertadas == 3
+    assert stub.calls == [
+        (
+            "re_consolidar",
+            (),
+            {
+                "desde": "2026-04-13",
+                "hasta": "2026-04-15",
+                "empleado_id": 7,
+                "actor_user_id": 55,
+            },
+        )
+    ]
+
+
+def test_re_consolidar_sin_filtro_pasa_empleado_id_none() -> None:
+    """Sin filtro de empleado, ``empleado_id`` se propaga como ``None``."""
+    ctrl, stub = _controller({perms.RUN_ZKTECO_SYNC})
+    ctrl.re_consolidar(desde="2026-04-13", hasta="2026-04-15")
+    assert stub.calls[0][2]["empleado_id"] is None
+
+
+def test_re_consolidar_sin_permiso_lanza_denied() -> None:
+    """Sin RUN_ZKTECO_SYNC (incluso teniendo VIEW_ATTENDANCE), lanza Denied."""
+    ctrl, stub = _controller({perms.VIEW_ATTENDANCE})
+    with pytest.raises(PermissionDeniedError):
+        ctrl.re_consolidar(desde="2026-04-13", hasta="2026-04-15")
+    assert stub.calls == []  # no debe llegar al service
+
+
+def test_puede_re_consolidar_true_con_run_sync() -> None:
+    ctrl, _ = _controller({perms.RUN_ZKTECO_SYNC})
+    assert ctrl.puede_re_consolidar() is True
+
+
+def test_puede_re_consolidar_false_sin_run_sync() -> None:
+    """REPORTES (sin RUN_ZKTECO_SYNC) → la vista oculta el botón."""
+    ctrl, _ = _controller({perms.EXPORT_REPORTS})
+    assert ctrl.puede_re_consolidar() is False

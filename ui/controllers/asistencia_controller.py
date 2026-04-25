@@ -1,17 +1,16 @@
-"""Controller de la vista de Asistencia (Sub-3.4b).
+"""Controller de la vista de Asistencia (Sub-3.4b / Sub-3.4c).
 
-Expone tres métodos de uso directo desde la vista, cada uno protegido
-por ``@require_permission(VIEW_ATTENDANCE)``:
+Expone los métodos de uso directo desde la vista:
 
-    - list_asistencias(desde, hasta, empleado_id=None)
-      Lista el rango con DTOs enriquecidos (nombre, DNI, turno) y la
-      bandera ``truncado`` para avisos de UI.
-    - list_empleados_para_filtro()
-      Combo del filtro de la cabecera.
-    - update_observaciones(asistencia_id, texto)
-      Guarda anotación manual; el controller inyecta ``actor_user_id``
-      desde la ``Session`` activa para que la vista no tenga que
-      conocer el id del usuario logueado.
+    - list_asistencias / list_empleados_para_filtro / update_observaciones
+      (VIEW_ATTENDANCE) — consulta y edición de anotaciones.
+    - re_consolidar(desde, hasta, empleado_id)
+      (RUN_ZKTECO_SYNC) — re-consolidación manual del rango, usada
+      cuando el operador editó turnos/feriados y quiere regenerar las
+      asistencias del período afectado.
+    - puede_re_consolidar()
+      Ayuda para la vista: decide si mostrar el botón de re-consolidar
+      según el rol del usuario logueado.
 
 Diseño:
     - El controller NO conoce Tk/customtkinter — devuelve modelos /
@@ -35,6 +34,7 @@ from core.services.asistencia_service import (
 )
 from core.services.permission_service import PermissionService, require_permission
 from core.services.session import Session
+from core.services.sincronizacion_result import ResultadoConsolidacion
 
 
 class AsistenciaController:
@@ -101,3 +101,39 @@ class AsistenciaController:
             observaciones=observaciones,
             actor_user_id=self.session.user_id,
         )
+
+    @require_permission(perms.RUN_ZKTECO_SYNC)
+    def re_consolidar(
+        self,
+        desde: str,
+        hasta: str,
+        empleado_id: Optional[int] = None,
+    ) -> ResultadoConsolidacion:
+        """Re-consolida el rango (opcionalmente filtrado por empleado).
+
+        Se protege con ``RUN_ZKTECO_SYNC`` — mismo permiso que la
+        sincronización, porque el efecto (regenerar asistencias) es de
+        la misma magnitud operativa. El ``actor_user_id`` lo resuelve
+        el controller desde la sesión activa.
+
+        Raises:
+            PermissionDeniedError: si el rol no tiene RUN_ZKTECO_SYNC.
+            EmpleadoNotFoundError: empleado filtrado no activo.
+            InvalidRangoError / InvalidDateError: rango mal formado.
+        """
+        return self._asistencia.re_consolidar(
+            desde=desde,
+            hasta=hasta,
+            empleado_id=empleado_id,
+            actor_user_id=self.session.user_id,
+        )
+
+    def puede_re_consolidar(self) -> bool:
+        """¿El usuario logueado puede re-consolidar? (para mostrar/ocultar botón).
+
+        No usa ``@require_permission`` — es una consulta booleana que
+        la vista usa para decidir su layout, no una acción privilegiada.
+        Delega en ``Session.has_permission``, que devuelve ``bool`` sin
+        levantar excepciones.
+        """
+        return self.session.has_permission(perms.RUN_ZKTECO_SYNC)
