@@ -45,6 +45,11 @@ dist/
 *.log
 logs/
 
+# ─── Runtime data (Fase 6 — modo portable) ───────────────────────────────────
+# data/ contiene la BD, logs y exports cuando la app corre como bundle
+# PyInstaller. En dev también se crea aquí — siempre se ignora.
+data/
+
 # ─── Secretos y configuración local ───────────────────────────────────────────
 .env
 .env.local

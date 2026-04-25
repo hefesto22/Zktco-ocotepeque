@@ -3,9 +3,18 @@
 Contiene constantes del sistema: identidad de la app, parámetros de seguridad,
 límites de sesión y rutas de archivos. Valores sensibles NUNCA se guardan aquí
 (para eso se usará la tabla de configuración en BD, cifrada si aplica).
+
+Notas sobre rutas (Fase 6 — packaging Windows)
+----------------------------------------------
+Las rutas de runtime se delegan a ``infrastructure.paths``, que resuelve
+correctamente tanto en modo dev como bajo PyInstaller. Los nombres
+``DATABASE_PATH`` y ``MIGRATIONS_DIR`` se preservan para no romper a los
+consumidores existentes (``bin/setup_wizard.py``, ``ui/app.py``).
 """
 
 from pathlib import Path
+
+from infrastructure import paths
 
 # ── Identidad de la aplicación ────────────────────────────────────────────────
 APP_NAME: str = "ZKTeco Attendance Desktop App"
@@ -13,16 +22,20 @@ APP_VENDOR: str = "Grupo Olympo"
 APP_VERSION: str = "0.1.0"  # pre-alpha, en desarrollo
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
-# BASE_DIR apunta a la raíz del proyecto (donde está este archivo).
+# BASE_DIR: raíz del repo. Se mantiene para retro-compat (lo usa main.py
+# como log informativo). Para resolver rutas reales, los nuevos consumidores
+# deben usar ``infrastructure.paths``.
+# TODO(mcruoz): deprecar tras Fase 6 — usar paths.app_dir(). 2026-04-24
 BASE_DIR: Path = Path(__file__).resolve().parent
 
-# Archivo SQLite local. En prod queda junto al .exe en %APPDATA%\Grupo Olympo\...,
-# pero durante desarrollo vive en la raíz del proyecto.
+# Archivo SQLite. Bajo modo portable (Opción B aprobada en Sub-6.1) vive
+# en ``<exe-dir>/data/zkteco_app.db``. En dev, ``<repo-root>/data/zkteco_app.db``.
 DATABASE_FILENAME: str = "zkteco_app.db"
-DATABASE_PATH: Path = BASE_DIR / DATABASE_FILENAME
+DATABASE_PATH: Path = paths.db_path()
 
-# Carpeta de migraciones SQL.
-MIGRATIONS_DIR: Path = BASE_DIR / "infrastructure" / "database" / "migrations"
+# Carpeta de migraciones SQL (read-only). Bajo PyInstaller ``--onefile``
+# resuelve a ``sys._MEIPASS / infrastructure/database/migrations``.
+MIGRATIONS_DIR: Path = paths.migrations_dir()
 
 # ── Seguridad ─────────────────────────────────────────────────────────────────
 # bcrypt cost factor. Mínimo 12 según las reglas del proyecto.
@@ -50,3 +63,9 @@ PASSWORD_REQUIRE_LETTER: bool = True
 # Nivel por defecto. En prod se baja a INFO o WARNING vía config en BD.
 LOG_LEVEL: str = "DEBUG"
 LOG_FORMAT: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+# Tamaño máximo del archivo de log (5 MB) y cuántos backups rotar.
+# Solo se usa cuando se instala el ``RotatingFileHandler`` — ver main.py.
+LOG_FILE_MAX_BYTES: int = 5 * 1024 * 1024
+LOG_FILE_BACKUP_COUNT: int = 3
+LOG_FILE_NAME: str = "app.log"

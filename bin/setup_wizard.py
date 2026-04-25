@@ -37,6 +37,7 @@ from core.services.errors import (
 )
 from core.services.password_policy import PasswordPolicy
 from core.services.setup_wizard_service import SetupWizardService
+from infrastructure import paths
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.security.bcrypt_hasher import BcryptHasher
@@ -47,6 +48,9 @@ _MAX_RETRIES = 3
 def main() -> int:
     """Ejecuta el wizard. Devuelve el exit code para ``sys.exit``."""
     logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
+    # Asegurar carpetas de runtime — la BD vive en data/zkteco_app.db
+    # y SQLite no crea la carpeta padre por sí solo.
+    paths.ensure_runtime_dirs()
 
     service = _build_service()
     if not service.is_first_run():
