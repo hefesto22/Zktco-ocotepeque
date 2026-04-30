@@ -3,12 +3,16 @@
 Se ejecuta con:
 
     python -m bin.seed_test_data
+    python -m bin.seed_test_data --db-path "dist/zkteco/data/zkteco_app.db"
 
 Comportamiento:
-    - Conecta a la BD principal (``zkteco_app.db``).
-    - Si existe un SUPERADMIN, lo usa como ``actor_user_id`` para el
+    - Por defecto conecta a la BD que resuelve ``config.DATABASE_PATH``
+      (modo dev = ``data/zkteco_app.db`` en la raíz del repo).
+    - Con ``--db-path`` apunta a otra BD — útil para sembrar la BD que
+      usa el .exe empaquetado, que vive en ``dist/zkteco/data/``.
+    - Si existe un usuario activo, lo usa como ``actor_user_id`` para el
       audit log; si no, aborta con instrucción de correr el setup_wizard
-      primero.
+      primero contra la misma BD.
     - Crea (idempotente) los catálogos y empleados de prueba listados
       abajo. Si ya existen los DNI/nombres canónicos, no falla — los
       omite e informa.
@@ -41,8 +45,10 @@ el operador lo corre explícitamente desde terminal.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
+from pathlib import Path
 from typing import Optional
 
 import config
@@ -69,7 +75,6 @@ from core.services.errors import (
 )
 from core.services.turno_service import TurnoService
 from core.models.turno import DIAS_LABORALES
-from infrastructure import paths
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 
@@ -92,25 +97,35 @@ _EMPLEADOS_TEST = [
 ]
 
 
-def main() -> int:
-    """Ejecuta el seed. Devuelve el exit code."""
-    logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
-    paths.ensure_runtime_dirs()
+def main(argv: Optional[list[str]] = None) -> int:
+    """Ejecuta el seed. Devuelve el exit code.
 
-    database = Database(config.DATABASE_PATH)
+    Args:
+        argv: Lista de argumentos (sin ``argv[0]``). Si es ``None`` usa
+            ``sys.argv[1:]``. Permite pasar args programáticamente desde
+            tests.
+    """
+    args = _parse_args(argv)
+    logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
+
+    db_path = _resolver_db_path(args.db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    database = Database(db_path)
     MigrationsRunner(database, config.MIGRATIONS_DIR).run()
 
     actor_id = _resolver_actor_user_id(database)
     if actor_id is None:
         print(
-            "✗ No se encontró ningún SUPERADMIN. Corré primero el setup_wizard:"
+            f"✗ No se encontró ningún usuario activo en {db_path}."
+            "\n  Corré primero el setup_wizard contra esa misma BD:"
             "\n    python -m bin.setup_wizard"
         )
         return 1
 
     print("═══════════════════════════════════════════════════════════════")
     print("  Seed de datos de prueba — ZKTeco Attendance App")
-    print(f"  BD: {config.DATABASE_PATH}")
+    print(f"  BD: {db_path}")
     print(f"  Actor (audit): user_id={actor_id}")
     print("═══════════════════════════════════════════════════════════════")
 
@@ -162,6 +177,42 @@ def main() -> int:
     return 0
 
 
+# ── Argumentos y resolución de BD ────────────────────────────────────────────
+
+
+def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
+    """Parsea ``--db-path`` y devuelve el ``Namespace``."""
+    parser = argparse.ArgumentParser(
+        prog="bin.seed_test_data",
+        description=(
+            "Siembra datos de prueba en la BD indicada. Si no se pasa "
+            "--db-path usa la BD por defecto del config."
+        ),
+    )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help=(
+            "Ruta al archivo SQLite a sembrar. Útil para apuntar a la BD "
+            "del .exe empaquetado (p.ej. dist/zkteco/data/zkteco_app.db)."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def _resolver_db_path(explicit: Optional[str]) -> Path:
+    """Devuelve el ``Path`` absoluto de la BD a sembrar.
+
+    Si el caller pasó ``--db-path`` se usa ese valor (resuelto contra el
+    cwd actual). Si no, cae al ``config.DATABASE_PATH`` que ya viene
+    pre-resuelto por ``infrastructure.paths``.
+    """
+    if explicit is not None:
+        return Path(explicit).resolve()
+    return config.DATABASE_PATH
+
+
 # ── Composition root del seed ────────────────────────────────────────────────
 
 
@@ -203,14 +254,15 @@ def _build_services(
 
 
 def _resolver_actor_user_id(database: Database) -> Optional[int]:
-    """Devuelve el user_id del primer SUPERADMIN encontrado, o None."""
+    """Devuelve el user_id del primer usuario activo, o ``None``.
+
+    Cualquier usuario activo sirve como actor del audit log para los
+    inserts de seed; no necesitamos exigir SUPERADMIN específicamente.
+    """
     repo = UsuarioRepositorySQLite(database)
     for usuario in repo.list_all():
-        if usuario.id is not None:
-            # Cualquier usuario activo sirve como actor del audit log.
-            # Buscamos el primer activo.
-            if usuario.is_active:
-                return usuario.id
+        if usuario.id is not None and usuario.is_active:
+            return usuario.id
     return None
 
 
