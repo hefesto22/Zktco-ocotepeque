@@ -32,6 +32,7 @@ Threading:
 from __future__ import annotations
 
 import logging
+from datetime import date
 from tkinter import messagebox
 from typing import List, Optional
 
@@ -245,17 +246,25 @@ class SincronizacionView(ctk.CTkFrame):
     # ── Handlers ──────────────────────────────────────────────────────────
 
     def _on_dispositivo_cambiado(self, label: str) -> None:
-        """Recalcula el rango default cada vez que cambia el dispositivo."""
+        """Recalcula el rango default cada vez que cambia el dispositivo.
+
+        ``calcular_rango_default`` retorna strings ISO ``YYYY-MM-DD``;
+        ``tkcalendar.DateEntry.set_date`` exige un ``date``/``datetime``
+        — pasarle el string crudo funciona en dev (babel parsea por su
+        cuenta) pero rompe en el bundle PyInstaller con
+        ``AttributeError: 'str' object has no attribute 'year'``.
+        Por eso convertimos explícitamente con ``date.fromisoformat``.
+        """
         dispositivo = self._dispositivos_por_label.get(label)
         if dispositivo is None or dispositivo.id is None:
             return
         try:
-            desde, hasta = self._controller.calcular_rango_default(dispositivo.id)
+            desde_iso, hasta_iso = self._controller.calcular_rango_default(dispositivo.id)
+            self._date_desde.set_date(date.fromisoformat(desde_iso))
+            self._date_hasta.set_date(date.fromisoformat(hasta_iso))
         except Exception:  # noqa: BLE001
             self._log.exception("Error calculando rango default dispositivo=%s", dispositivo.id)
             return
-        self._date_desde.set_date(desde)
-        self._date_hasta.set_date(hasta)
 
     def _on_sincronizar(self) -> None:
         """Dispara la sincronización en un thread, no bloquea el UI."""

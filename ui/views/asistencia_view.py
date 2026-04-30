@@ -768,11 +768,20 @@ class AsistenciaView(ctk.CTkFrame):
         return None
 
     def _recargar_si_aplica(self) -> None:
-        """Re-dispara la última query si hay una en memoria."""
+        """Re-dispara la última query si hay una en memoria.
+
+        ``_ultimo_desde``/``_ultimo_hasta`` son strings ISO ``YYYY-MM-DD``
+        (eso es lo que la vista guarda cuando se ejecuta una búsqueda
+        desde ``_on_cargar``). ``tkcalendar.DateEntry.set_date`` exige
+        ``date``/``datetime`` — pasarle el string crudo funciona en dev
+        pero rompe en el bundle PyInstaller con
+        ``AttributeError: 'str' object has no attribute 'year'``. Por
+        eso convertimos explícitamente con ``date.fromisoformat``.
+        """
         if self._ultimo_desde is None or self._ultimo_hasta is None:
             return
         # Simulamos el click en Cargar con los últimos parámetros. Esto
         # re-bloquea controles y re-pinta la tabla al completar.
-        self._date_desde.set_date(self._ultimo_desde)
-        self._date_hasta.set_date(self._ultimo_hasta)
+        self._date_desde.set_date(date.fromisoformat(self._ultimo_desde))
+        self._date_hasta.set_date(date.fromisoformat(self._ultimo_hasta))
         self._on_cargar()
