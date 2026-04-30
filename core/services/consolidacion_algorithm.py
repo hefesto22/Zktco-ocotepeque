@@ -6,24 +6,33 @@ empleado y un día:
     1. Qué turno le aplicaba (consultando su historial de asignaciones).
     2. Qué marcadas pertenecen a ese día (ventana temporal correcta,
        incluyendo turnos que cruzan medianoche).
-    3. Cuáles son la entrada y la salida (algoritmo "ventana de entrada"
-       — Sub-2.7d, decisión 6).
+    3. Cuáles son la entrada y la salida (algoritmo "ventana dinámica"
+       — Sub-2.7e, redefinido a partir de Sub-2.7d).
     4. Qué estado final de asistencia corresponde (aplicando tolerancias
        de entrada y salida configuradas por turno).
 
-Algoritmo "ventana de entrada" (Sub-2.7d):
+Algoritmo "ventana dinámica" (Sub-2.7e):
     El K40 (firmware estándar ZKTeco) NO distingue entrada vs salida al
     pulsar — todas las marcadas suelen llegar como CHECK_OUT o UNKNOWN.
-    En vez de confiar en ese campo, deducimos por HORA DEL DÍA:
+    En vez de confiar en ese campo Y en vez de fijar el cutoff a la
+    hora oficial del turno (Sub-2.7d), usamos la PRIMERA marcada del
+    empleado como ancla:
 
-        cutoff_entrada = hora_oficial_entrada + ``VENTANA_ENTRADA_MIN``
-        - Marcadas con timestamp <= cutoff: candidatas a ENTRADA.
-          La primera (cronológica) es la entrada. Las demás se ignoran
-          como ruido (el operador presionó la huella varias veces al
-          llegar — todas valen como una sola entrada).
-        - Marcadas con timestamp > cutoff: candidatas a SALIDA.
-          La última es la salida. Igual: si presionó varias veces al
-          irse, todas se pliegan en la última.
+        - La PRIMERA marcada del día = ENTRADA, sin importar la hora
+          (sea 7:00, 10:30 o 14:00). Cubre los casos en los que el
+          empleado llega tarde — se respeta su hora real de llegada.
+        - cutoff_salida = entrada + ``VENTANA_REBOTE_MINUTOS`` (default 60)
+        - Marcadas dentro de ``(entrada, cutoff_salida]`` son rebotes
+          (el operador apoya el dedo varias veces al entrar) y se
+          ignoran.
+        - Marcadas > cutoff_salida son candidatas a SALIDA. La última
+          gana — incluso si está después de la hora_salida del turno
+          (ej. entró 7:00, marcó 19:00 → salida = 19:00, no 17:00).
+        - Si NO hay marcada > cutoff_salida y el caller indica que el
+          día ya cerró (fecha pasada, o fecha actual con hora >= 20:00),
+          se asume salida = hora_salida del turno asignado y se anota
+          una observación auditable. Si el día aún no cerró, salida
+          queda en None y el estado deriva a INCOMPLETO.
 
     El campo ``tipo_marcada`` del raw queda como auditoría histórica
     pero NO se usa para el pareo. Esto generaliza al hecho que en la
@@ -54,16 +63,23 @@ from core.models.empleado_turno import EmpleadoTurno
 from core.models.registro_raw import RegistroRaw
 from core.models.turno import Turno, dia_aplica
 
-# Minutos después de la hora oficial de entrada que aún cuentan como
-# "candidata a entrada". Sub-2.7d: el operador puede apoyar la huella
-# en cualquier momento dentro de esta franja al llegar; cualquier
-# marcada posterior al cutoff cuenta como salida.
+# Minutos después de la PRIMERA marcada del día durante los cuales las
+# marcadas posteriores se consideran "rebote" (el operador apoyó el
+# dedo varias veces al entrar) y se ignoran. La siguiente marcada
+# fuera de esta ventana es candidata a salida.
 #
-# 60 cubre con holgura los turnos típicos de la municipalidad
-# (08:00-17:00 → cutoff 09:00). Si una organización quisiera más
-# tolerancia, este valor se podría mover a config.py o a un campo del
-# turno; por ahora hardcodeado para mantener simplicidad.
-VENTANA_ENTRADA_MINUTOS_DEFAULT: int = 60
+# 60 cubre con holgura los rebotes típicos sin cerrar la puerta a
+# salidas legítimas tempranas (algún empleado puede salir 1h+ después
+# de entrar, por ejemplo en pausas largas). Si una organización quisiera
+# otra ventana, mover a config.py o a un campo del turno.
+VENTANA_REBOTE_MINUTOS: int = 60
+
+# Hora del día (formato local) a partir de la cual, si el empleado
+# tiene entrada pero no salida marcada, se asume que su salida fue la
+# hora oficial de su turno ("hizo el día completo"). Antes de las
+# 20:00 dejamos la asistencia como INCOMPLETO porque el empleado todavía
+# podría volver a marcar.
+HORA_LIMITE_DIA: time = time(20, 0)
 
 # ── Formatos ──────────────────────────────────────────────────────────────────
 
@@ -83,11 +99,21 @@ class MarcadasDelDia:
         entrada: Timestamp de entrada efectiva, o ``None`` si no hay marcada
             clasificable como entrada.
         salida: Timestamp de salida efectiva, o ``None`` si no hay marcada
-            clasificable como salida.
+            clasificable como salida (y el día aún no cerró).
+        salida_es_asumida: ``True`` cuando la salida fue derivada del
+            turno (no marcada físicamente) por haber pasado la hora
+            límite del día sin segunda marcada. Útil para reportes
+            auditables.
+        observacion: Texto en español apto para mostrar/exportar cuando
+            corresponde explicar el origen de la salida (típicamente,
+            "Salida asumida según turno: sin segunda marcada"). ``None``
+            cuando no hay nada relevante que comunicar.
     """
 
     entrada: Optional[datetime]
     salida: Optional[datetime]
+    salida_es_asumida: bool = False
+    observacion: Optional[str] = None
 
 
 # ── Resolución de turno vigente en una fecha histórica ────────────────────────
@@ -188,64 +214,43 @@ def ventana_del_dia(turno: Turno, fecha_iso: str) -> Tuple[datetime, datetime]:
     return inicio_ventana, fin_ventana
 
 
-# ── Cutoff de entrada (Sub-2.7d) ──────────────────────────────────────────────
+# ── Pareo de marcadas (algoritmo "ventana dinámica", Sub-2.7e) ───────────────
 
 
-def cutoff_entrada_del_turno(
-    turno: Turno,
-    fecha_iso: str,
-    ventana_minutos: int = VENTANA_ENTRADA_MINUTOS_DEFAULT,
-) -> datetime:
-    """Calcula el límite temporal entre "candidato a entrada" y "candidato a salida".
-
-    El cutoff es la hora oficial de entrada del turno desplazada
-    ``ventana_minutos`` hacia adelante. Cualquier marcada con timestamp
-    <= cutoff cuenta como entrada (la primera gana); el resto cuenta
-    como salida (la última gana).
-
-    Args:
-        turno: Turno vigente del empleado ese día.
-        fecha_iso: Día de ENTRADA del turno, ``"YYYY-MM-DD"``.
-        ventana_minutos: Cuántos minutos después de la entrada oficial
-            siguen contando como zona de entrada. Default 60.
-
-    Returns:
-        ``datetime`` naive marcando el cutoff.
-    """
-    dia = _parse_fecha(fecha_iso, campo="fecha_iso")
-    hora_entrada = _parse_hora(turno.hora_entrada, campo="hora_entrada")
-    return datetime.combine(dia, hora_entrada) + timedelta(minutes=ventana_minutos)
-
-
-# ── Pareo de marcadas (algoritmo "ventana de entrada", Sub-2.7d) ─────────────
+_OBS_SALIDA_ASUMIDA: str = "Salida asumida según turno: sin segunda marcada."
 
 
 def parear_marcadas(
     registros: List[RegistroRaw],
     inicio_ventana: datetime,
     fin_ventana: datetime,
-    cutoff_entrada: datetime,
+    turno: Turno,
+    fecha_iso: str,
+    ahora: datetime,
 ) -> MarcadasDelDia:
     """Determina la entrada y la salida efectivas para un grupo de marcadas.
 
-    Algoritmo "ventana de entrada" (Sub-2.7d, decisión 6):
+    Algoritmo "ventana dinámica" (Sub-2.7e):
 
         1. Filtra marcadas dentro de ``[inicio_ventana, fin_ventana]``.
-        2. Las que cayeron <= ``cutoff_entrada`` son candidatas a ENTRADA.
-           La PRIMERA (cronológica) gana — las posteriores se ignoran
-           como ruido (el operador apoyó la huella varias veces).
-        3. Las que cayeron > ``cutoff_entrada`` son candidatas a SALIDA.
-           La ÚLTIMA gana — el resto son intermedias (ej. si abrió la
-           huella varias veces antes de irse).
-        4. NO se inspecciona ``tipo_marcada``: el K40 estándar reporta
+        2. La PRIMERA marcada de la ventana es la ENTRADA, sin importar
+           la hora del día. Cubre llegadas tardías como entrada real.
+        3. ``cutoff_salida = entrada + VENTANA_REBOTE_MINUTOS``. Las
+           marcadas dentro de ``(entrada, cutoff_salida]`` se ignoran
+           como rebote (el operador apoyó el dedo más de una vez al
+           entrar).
+        4. Las marcadas con ``timestamp > cutoff_salida`` son candidatas
+           a SALIDA. La ÚLTIMA gana — y prevalece sobre la hora_salida
+           del turno (ej. si entró 7:00 y marcó 19:00, la salida es 19:00
+           aunque su turno fuera 8-17).
+        5. Si NO hay marcadas posteriores al cutoff y el día ya cerró
+           (fecha de la asistencia anterior a ``ahora.date()`` o, si es
+           el mismo día, ``ahora.time() >= HORA_LIMITE_DIA``), se asume
+           ``salida = hora_salida`` del turno y se anota la observación.
+           Si el día aún no cerró, ``salida = None`` y el estado caerá
+           en INCOMPLETO.
+        6. NO se inspecciona ``tipo_marcada``: el K40 estándar reporta
            todo como CHECK_OUT/UNKNOWN, así que no es confiable.
-
-    Casos borde:
-        - Sin marcadas en la ventana → ``(None, None)`` → AUSENTE.
-        - Solo marcadas <= cutoff → entrada poblada, salida ``None`` →
-          INCOMPLETO (entró pero no marcó salida).
-        - Solo marcadas > cutoff → entrada ``None``, salida poblada →
-          INCOMPLETO (no marcó entrada o marcó muy tarde).
 
     Args:
         registros: Marcadas candidatas (cualquier orden; se ordena
@@ -255,28 +260,71 @@ def parear_marcadas(
             se descartan).
         fin_ventana: Límite superior inclusive (marcadas posteriores se
             descartan).
-        cutoff_entrada: Frontera temporal entrada vs salida. Típicamente
-            ``cutoff_entrada_del_turno(turno, fecha)``.
+        turno: Turno vigente del empleado ese día. Necesario para poder
+            asumir la salida cuando no hay segunda marcada y el día ya
+            cerró.
+        fecha_iso: Día de ENTRADA del turno, ``"YYYY-MM-DD"``.
+        ahora: Datetime de referencia para decidir si el día ya cerró.
+            En producción es ``datetime.now()``; en tests se inyecta
+            fijo para validar las dos ramas (día abierto vs cerrado)
+            sin acoplar a un reloj real.
 
     Returns:
-        ``MarcadasDelDia(entrada, salida)`` con ``datetime`` naive o
-        ``None`` en cada campo.
+        ``MarcadasDelDia`` con entrada y salida, banderas si la salida
+        fue asumida y la observación correspondiente.
     """
     en_ventana = _filtrar_y_ordenar(registros, inicio_ventana, fin_ventana)
     if not en_ventana:
         return MarcadasDelDia(entrada=None, salida=None)
 
-    entrada: Optional[datetime] = None
-    salida: Optional[datetime] = None
-    for ts in (_parse_timestamp(r.timestamp) for r in en_ventana):
-        if ts <= cutoff_entrada:
-            # Primera marcada en zona de entrada gana; las demás se ignoran.
-            if entrada is None:
-                entrada = ts
-        else:
-            # En zona de salida la última gana — sobreescribimos en cada paso.
-            salida = ts
-    return MarcadasDelDia(entrada=entrada, salida=salida)
+    timestamps = [_parse_timestamp(r.timestamp) for r in en_ventana]
+    entrada = timestamps[0]
+    cutoff_salida = entrada + timedelta(minutes=VENTANA_REBOTE_MINUTOS)
+
+    candidatas_salida = [ts for ts in timestamps[1:] if ts > cutoff_salida]
+    if candidatas_salida:
+        return MarcadasDelDia(entrada=entrada, salida=candidatas_salida[-1])
+
+    # No hay segunda marcada válida: decidimos si el día ya cerró.
+    salida_asumida = _calcular_salida_asumida(turno, fecha_iso, ahora)
+    if salida_asumida is None:
+        return MarcadasDelDia(entrada=entrada, salida=None)
+    return MarcadasDelDia(
+        entrada=entrada,
+        salida=salida_asumida,
+        salida_es_asumida=True,
+        observacion=_OBS_SALIDA_ASUMIDA,
+    )
+
+
+def _calcular_salida_asumida(turno: Turno, fecha_iso: str, ahora: datetime) -> Optional[datetime]:
+    """Devuelve la salida asumida según turno, o ``None`` si el día sigue abierto.
+
+    Reglas:
+        - ``fecha < ahora.date()``: día cerrado → asumir.
+        - ``fecha == ahora.date()`` y ``ahora.time() >= HORA_LIMITE_DIA``
+          → día cerrado → asumir.
+        - En cualquier otro caso (incluido el futuro) → ``None``.
+
+    La hora asumida es ``hora_salida`` del turno, con la corrección de
+    día siguiente cuando el turno cruza medianoche — análogo a cómo
+    ``ventana_del_dia`` calcula el fin de ventana.
+    """
+    fecha = _parse_fecha(fecha_iso, campo="fecha_iso")
+    if not _dia_ya_cerrado(fecha, ahora):
+        return None
+    hora_salida = _parse_hora(turno.hora_salida, campo="hora_salida")
+    dia_salida = fecha + timedelta(days=1) if turno.cruza_medianoche else fecha
+    return datetime.combine(dia_salida, hora_salida)
+
+
+def _dia_ya_cerrado(fecha: date, ahora: datetime) -> bool:
+    """Predicado puro: ¿el día de la asistencia ya está cerrado para registrar?"""
+    if fecha < ahora.date():
+        return True
+    if fecha == ahora.date() and ahora.time() >= HORA_LIMITE_DIA:
+        return True
+    return False
 
 
 def _filtrar_y_ordenar(

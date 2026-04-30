@@ -400,8 +400,13 @@ def test_consolida_ausente_cuando_turno_aplica_pero_no_hay_marcadas(
     assert asistencia.hora_salida_real is None
 
 
-def test_consolida_incompleto_cuando_solo_hay_entrada(setup: _Ctx) -> None:
-    """Una sola marcada clasificable como entrada → INCOMPLETO."""
+def test_consolida_dia_pasado_solo_con_entrada_asume_salida_segun_turno(
+    setup: _Ctx,
+) -> None:
+    """Sub-2.7e: si la fecha de la asistencia es anterior a hoy, el día
+    está cerrado → se asume salida = hora_salida del turno y se anota
+    una observación auditable. Así no queda como INCOMPLETO una jornada
+    que el operador no marcó al irse."""
     emp_id = _crear_empleado(setup, "Laura", "Díaz", zkteco_id=104, indice=4)
     _asignar_turno(setup, emp_id, setup.turno_diurno_id)
     _insertar_raws(
@@ -413,9 +418,45 @@ def test_consolida_incompleto_cuando_solo_hay_entrada(setup: _Ctx) -> None:
 
     asistencia = setup.asistencia_repo.get_by_empleado_y_fecha(emp_id, "2026-04-15")
     assert asistencia is not None
+    assert asistencia.estado == EstadoAsistencia.PRESENTE.value
+    assert asistencia.hora_entrada_real == "08:00:00"
+    assert asistencia.hora_salida_real == "17:00:00"
+    assert asistencia.observaciones is not None
+    assert "Salida asumida" in asistencia.observaciones
+
+
+def test_consolida_dia_abierto_solo_con_entrada_queda_incompleto(
+    setup: _Ctx, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sub-2.7e: si la fecha de la asistencia es la del día actual y aún
+    no son las 20:00, el empleado todavía puede marcar la salida → la
+    asistencia se deja en INCOMPLETO sin asumir nada.
+
+    Forzamos ``_ahora_local`` con monkeypatch para que el algoritmo lo
+    perciba como "mismo día a las 14:00" — sin acoplar el test al reloj
+    de pared del runner.
+    """
+    from datetime import datetime as _dt
+
+    from core.services import consolidacion_service as cs_mod
+
+    emp_id = _crear_empleado(setup, "Laura", "Díaz", zkteco_id=104, indice=4)
+    _asignar_turno(setup, emp_id, setup.turno_diurno_id)
+    _insertar_raws(
+        setup,
+        [_raw(setup, 104, "2026-04-15T08:00:00", TipoMarcada.CHECK_IN.value)],
+    )
+    monkeypatch.setattr(cs_mod, "_ahora_local", lambda: _dt(2026, 4, 15, 14, 0))
+
+    setup.service.consolidar_rango("2026-04-15", "2026-04-15")
+
+    asistencia = setup.asistencia_repo.get_by_empleado_y_fecha(emp_id, "2026-04-15")
+    assert asistencia is not None
     assert asistencia.estado == EstadoAsistencia.INCOMPLETO.value
     assert asistencia.hora_entrada_real == "08:00:00"
     assert asistencia.hora_salida_real is None
+    # Sin observación: el operador todavía puede marcar.
+    assert asistencia.observaciones is None
 
 
 # ── Tests: SIN_TURNO / FERIADO ────────────────────────────────────────────────

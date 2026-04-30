@@ -60,7 +60,6 @@ from core.services.audit_logger import AuditLogger
 from core.services.consolidacion_algorithm import (
     derivar_estado,
     estado_no_trabaja,
-    cutoff_entrada_del_turno,
     parear_marcadas,
     resolver_turno_en_fecha,
     ventana_del_dia,
@@ -363,12 +362,19 @@ class ConsolidacionService:
         # Turno aplica ese día: buscamos marcadas dentro de la ventana.
         assert turno is not None  # garantizado por estado_no_trabaja
         inicio_ventana, fin_ventana = ventana_del_dia(turno, fecha_iso)
-        # Sub-2.7d: el cutoff define la frontera "entrada vs salida"
-        # basada en hora_entrada del turno + 60 min, en lugar de
-        # confiar en el tipo_marcada del K40 (que el reloj estándar
-        # no diferencia al pulsar).
-        cutoff = cutoff_entrada_del_turno(turno, fecha_iso)
-        marcadas = parear_marcadas(raws_del_empleado, inicio_ventana, fin_ventana, cutoff)
+        # Sub-2.7e: el algoritmo "ventana dinámica" usa la primera
+        # marcada como ancla y asume salida según turno cuando el día
+        # ya cerró sin segunda marcada (>= 20:00 hora local). La
+        # decisión depende de "ahora" — lo inyectamos para que el
+        # algoritmo siga puro y testeable.
+        marcadas = parear_marcadas(
+            raws_del_empleado,
+            inicio_ventana,
+            fin_ventana,
+            turno,
+            fecha_iso,
+            ahora=_ahora_local(),
+        )
         derivado = derivar_estado(marcadas, turno, fecha_iso)
 
         return Asistencia(
@@ -381,6 +387,7 @@ class ConsolidacionService:
             hora_salida_real=derivado.hora_salida_real,
             minutos_tarde=derivado.minutos_tarde,
             minutos_salida_temprana=derivado.minutos_salida_temprana,
+            observaciones=marcadas.observacion,
             consolidada_en=_now_iso_utc(),
         )
 
@@ -448,3 +455,14 @@ def _contar_dias(desde: date, hasta: date) -> int:
 def _now_iso_utc() -> str:
     """Momento actual en ISO-8601 UTC con segundos (sin microsegundos)."""
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _ahora_local() -> datetime:
+    """Devuelve ``datetime.now()`` naive en hora local.
+
+    Se usa para decidir si el día de la asistencia ya cerró (regla de
+    "salida asumida"). Lo extrajimos a un helper de módulo para que sea
+    fácilmente monkeypatch-able desde tests del service si hace falta;
+    el algoritmo puro recibe el datetime explícito y no toca el reloj.
+    """
+    return datetime.now()
