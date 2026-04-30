@@ -54,8 +54,18 @@ class UsuariosController:
 
     @require_permission(perms.MANAGE_USERS)
     def list_usuarios(self, solo_activos: bool = False) -> List[UsuarioConRol]:
-        """Devuelve la lista de usuarios con su rol resuelto."""
-        return self._service.list_usuarios(solo_activos=solo_activos)
+        """Devuelve la lista de usuarios con su rol resuelto.
+
+        Defensa R7: si el actor NO es SUPERADMIN, los usuarios con rol
+        SUPERADMIN se filtran del resultado. Razón: aunque R1/R4 ya
+        impiden tocarlo, mostrarlo en la lista revela que existe el
+        usuario admin del sistema (info disclosure). El SUPERADMIN sí
+        se ve a sí mismo y a todos los demás.
+        """
+        usuarios = self._service.list_usuarios(solo_activos=solo_activos)
+        if self.session.role_code == perms.ROLE_SUPERADMIN:
+            return usuarios
+        return [u for u in usuarios if u.rol_code != perms.ROLE_SUPERADMIN]
 
     @require_permission(perms.MANAGE_USERS)
     def list_roles_asignables(self) -> List[Rol]:

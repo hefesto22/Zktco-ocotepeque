@@ -230,10 +230,103 @@ def test_deactivate_y_reactivate_delegan() -> None:
 
 
 def test_list_usuarios_delega() -> None:
-    ctrl, stub, _ = _controller({perms.MANAGE_USERS})
+    ctrl, stub, _ = _controller({perms.MANAGE_USERS}, role_code=perms.ROLE_SUPERADMIN)
     res = ctrl.list_usuarios(solo_activos=True)
     assert len(res) == 1
     assert stub.calls == [("list_usuarios", (), {"solo_activos": True})]
+
+
+def test_list_usuarios_admin_no_ve_al_superadmin() -> None:
+    """Defensa R7: el ADMIN no debe poder ver al SUPERADMIN en la lista
+    (info disclosure — aunque R1/R4 ya impiden tocarlo)."""
+
+    class _StubConSuperadmin(_StubUsuarioAdminService):
+        def list_usuarios(self, solo_activos: bool = False) -> List[UsuarioConRol]:
+            self._record("list_usuarios", solo_activos=solo_activos)
+            return [
+                UsuarioConRol(
+                    usuario=Usuario(
+                        id=1,
+                        username="admin",
+                        password_hash="h",
+                        full_name="A",
+                        role_id=1,
+                        is_active=True,
+                    ),
+                    rol_code=perms.ROLE_SUPERADMIN,
+                    rol_name="Super Administrador",
+                ),
+                UsuarioConRol(
+                    usuario=Usuario(
+                        id=2,
+                        username="prueba",
+                        password_hash="h",
+                        full_name="P",
+                        role_id=2,
+                        is_active=True,
+                    ),
+                    rol_code=perms.ROLE_ADMIN,
+                    rol_name="Administrador",
+                ),
+            ]
+
+    stub_svc = _StubConSuperadmin()
+    stub_rol = _StubRolReadRepo()
+    ctrl = UsuariosController(
+        session=_session({perms.MANAGE_USERS}, role_code=perms.ROLE_ADMIN),
+        permission_service=PermissionService(),
+        usuario_admin_service=stub_svc,  # type: ignore[arg-type]
+        rol_read=stub_rol,  # type: ignore[arg-type]
+    )
+    res = ctrl.list_usuarios()
+    usernames = {u.usuario.username for u in res}
+    assert usernames == {"prueba"}  # superadmin no aparece
+
+
+def test_list_usuarios_superadmin_ve_a_todos() -> None:
+    """El SUPERADMIN sí se ve a sí mismo y al resto."""
+
+    class _StubConSuperadmin(_StubUsuarioAdminService):
+        def list_usuarios(self, solo_activos: bool = False) -> List[UsuarioConRol]:
+            self._record("list_usuarios", solo_activos=solo_activos)
+            return [
+                UsuarioConRol(
+                    usuario=Usuario(
+                        id=1,
+                        username="admin",
+                        password_hash="h",
+                        full_name="A",
+                        role_id=1,
+                        is_active=True,
+                    ),
+                    rol_code=perms.ROLE_SUPERADMIN,
+                    rol_name="Super Administrador",
+                ),
+                UsuarioConRol(
+                    usuario=Usuario(
+                        id=2,
+                        username="prueba",
+                        password_hash="h",
+                        full_name="P",
+                        role_id=2,
+                        is_active=True,
+                    ),
+                    rol_code=perms.ROLE_ADMIN,
+                    rol_name="Administrador",
+                ),
+            ]
+
+    stub_svc = _StubConSuperadmin()
+    stub_rol = _StubRolReadRepo()
+    ctrl = UsuariosController(
+        session=_session({perms.MANAGE_USERS}, role_code=perms.ROLE_SUPERADMIN),
+        permission_service=PermissionService(),
+        usuario_admin_service=stub_svc,  # type: ignore[arg-type]
+        rol_read=stub_rol,  # type: ignore[arg-type]
+    )
+    res = ctrl.list_usuarios()
+    usernames = {u.usuario.username for u in res}
+    assert usernames == {"admin", "prueba"}
 
 
 # ── Filtro de roles según rol del actor ──────────────────────────────────────
