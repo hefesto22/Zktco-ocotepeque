@@ -185,6 +185,12 @@ class MainFrame(ctk.CTkFrame):
         el controller invoca el callback ``open_view`` que montamos aquí.
         Si el permiso falla, capturamos y mostramos un aviso en el área
         central — sin cerrar la app.
+
+        Cualquier otra excepción al construir la vista también se captura
+        para evitar que la app quede en estado inconsistente: en un .exe
+        ``--windowed`` (sin consola) un raise no manejado se pierde
+        silenciosamente y el usuario solo ve que el click "no hace nada".
+        Loggeamos con traceback completo y mostramos un placeholder.
         """
         try:
             self._controller.open_by_code(code)
@@ -193,6 +199,13 @@ class MainFrame(ctk.CTkFrame):
             # bug de filter_visible. Lo reportamos pero no tumbamos la app.
             self._log.error("Click en módulo sin permiso: %s", code)
             self._mostrar_acceso_denegado(code)
+        except Exception:
+            # Boundary handler de UI: la regla "nunca capturar Exception
+            # genérica" se relaja aquí porque sin este catch, los errores
+            # del bundle PyInstaller (hidden imports faltantes, data files
+            # no incluidos, etc.) se pierden y la app queda muda.
+            self._log.exception("Error inesperado al abrir módulo '%s'", code)
+            self._mostrar_error_inesperado(code)
 
     def _on_btn_logout(self) -> None:
         """Click en el botón de cerrar sesión."""
@@ -249,6 +262,25 @@ class MainFrame(ctk.CTkFrame):
                 f"Su rol actual ({self._session.role_code}) no tiene permiso "
                 f"para abrir este módulo ({code}). Si considera que es un "
                 "error, contacte al SUPERADMIN."
+            ),
+        )
+        self._montar_view(aviso)
+
+    def _mostrar_error_inesperado(self, code: str) -> None:
+        """Placeholder cuando una excepción no esperada rompe la apertura.
+
+        Mensaje en español al usuario sin stack trace; el traceback ya
+        quedó loggeado por ``_abrir`` con ``logger.exception``.
+        """
+        item = self._items_by_code.get(code)
+        titulo_modulo = item.label if item is not None else code
+        aviso = PlaceholderView(
+            self._content,
+            title="Error inesperado",
+            description=(
+                f"No se pudo abrir el módulo «{titulo_modulo}». "
+                "Revise el archivo de log para más detalles "
+                "o contacte al administrador."
             ),
         )
         self._montar_view(aviso)
