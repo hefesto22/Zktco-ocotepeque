@@ -29,7 +29,9 @@ from core.models.turno import (
     Turno,
 )
 from core.services.consolidacion_algorithm import (
+    VENTANA_ENTRADA_MINUTOS_DEFAULT,
     MarcadasDelDia,
+    cutoff_entrada_del_turno,
     derivar_estado,
     estado_no_trabaja,
     parear_marcadas,
@@ -171,83 +173,137 @@ def test_ventana_con_tolerancias_cero() -> None:
     assert fin == datetime(2026, 4, 15, 17, 0)
 
 
-# ── parear_marcadas ──────────────────────────────────────────────────────────
+# ── cutoff_entrada_del_turno (Sub-2.7d) ──────────────────────────────────────
 
 
-def test_parear_ambos_explicitos_usa_primer_in_y_ultimo_out() -> None:
+def test_cutoff_default_es_60_min_despues_de_entrada() -> None:
+    """Turno 08:00 → cutoff default = 09:00."""
+    turno = _turno(hora_entrada="08:00", hora_salida="17:00")
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15")
+    assert cutoff == datetime(2026, 4, 15, 9, 0)
+
+
+def test_cutoff_acepta_ventana_personalizada() -> None:
+    """Pasando ventana_minutos override se respeta."""
+    turno = _turno(hora_entrada="08:00", hora_salida="17:00")
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15", ventana_minutos=90)
+    assert cutoff == datetime(2026, 4, 15, 9, 30)
+
+
+def test_cutoff_turno_de_tarde_funciona_igual() -> None:
+    """No depende del horario absoluto; solo de hora_entrada del turno."""
+    turno = _turno(hora_entrada="14:00", hora_salida="22:00")
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15")
+    assert cutoff == datetime(2026, 4, 15, 15, 0)
+
+
+def test_cutoff_constante_default_es_60() -> None:
+    assert VENTANA_ENTRADA_MINUTOS_DEFAULT == 60
+
+
+# ── parear_marcadas (algoritmo "ventana de entrada", Sub-2.7d) ───────────────
+
+
+def _cutoff_default(fecha: str = "2026-04-15") -> datetime:
+    """Helper: cutoff de un turno 08:00 en la fecha dada (= 09:00)."""
+    return cutoff_entrada_del_turno(_turno(hora_entrada="08:00"), fecha)
+
+
+def test_parear_primera_antes_de_cutoff_es_entrada_ultima_despues_es_salida() -> None:
+    """Caso típico: una marcada antes del cutoff y una después."""
     raws = [
-        _raw("2026-04-15T08:00:00", tipo=TipoMarcada.CHECK_IN.value),
-        _raw("2026-04-15T12:00:00", tipo=TipoMarcada.CHECK_OUT.value),  # salida a almorzar
-        _raw("2026-04-15T13:00:00", tipo=TipoMarcada.CHECK_IN.value),  # vuelve
-        _raw("2026-04-15T17:00:00", tipo=TipoMarcada.CHECK_OUT.value),  # salida final
+        _raw("2026-04-15T08:00:00"),
+        _raw("2026-04-15T17:00:00"),
     ]
     inicio = datetime(2026, 4, 15, 7, 50)
     fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
     assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
     assert marcadas.salida == datetime(2026, 4, 15, 17, 0)
 
 
-def test_parear_solo_unknowns_usa_primera_y_ultima() -> None:
+def test_parear_multiples_antes_de_cutoff_solo_la_primera_es_entrada() -> None:
+    """Si el operador apoya la huella varias veces al llegar, solo la
+    PRIMERA marcada cuenta como entrada — el resto se ignora como ruido."""
     raws = [
-        _raw("2026-04-15T07:55:00"),
-        _raw("2026-04-15T12:00:00"),
-        _raw("2026-04-15T17:05:00"),
+        _raw("2026-04-15T08:00:00"),  # entrada — primera
+        _raw("2026-04-15T08:05:00"),  # ruido — ignorada
+        _raw("2026-04-15T08:30:00"),  # ruido — ignorada
+        _raw("2026-04-15T17:00:00"),  # salida
     ]
     inicio = datetime(2026, 4, 15, 7, 50)
     fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
-    assert marcadas.entrada == datetime(2026, 4, 15, 7, 55)
-    assert marcadas.salida == datetime(2026, 4, 15, 17, 5)
-
-
-def test_parear_mezcla_prefiere_explicitos_sobre_unknown() -> None:
-    """Si hay CHECK_IN/OUT explícitos, los UNKNOWN no pisan."""
-    raws = [
-        _raw("2026-04-15T07:30:00"),  # UNKNOWN temprano — NO debe ser entrada
-        _raw("2026-04-15T08:00:00", tipo=TipoMarcada.CHECK_IN.value),
-        _raw("2026-04-15T17:00:00", tipo=TipoMarcada.CHECK_OUT.value),
-        _raw("2026-04-15T17:30:00"),  # UNKNOWN tardío — NO debe ser salida
-    ]
-    inicio = datetime(2026, 4, 15, 7, 0)
-    fin = datetime(2026, 4, 15, 18, 0)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
     assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
     assert marcadas.salida == datetime(2026, 4, 15, 17, 0)
 
 
-def test_parear_overtime_tambien_es_entrada_y_salida() -> None:
+def test_parear_multiples_despues_de_cutoff_solo_la_ultima_es_salida() -> None:
+    """Si presiona la huella varias veces al irse, solo la ÚLTIMA es la salida."""
     raws = [
-        _raw("2026-04-15T08:00:00", tipo=TipoMarcada.OVERTIME_IN.value),
-        _raw("2026-04-15T20:00:00", tipo=TipoMarcada.OVERTIME_OUT.value),
+        _raw("2026-04-15T08:00:00"),  # entrada
+        _raw("2026-04-15T16:30:00"),  # ruido
+        _raw("2026-04-15T16:55:00"),  # ruido
+        _raw("2026-04-15T17:00:00"),  # salida — última
     ]
     inicio = datetime(2026, 4, 15, 7, 50)
-    fin = datetime(2026, 4, 15, 21, 0)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    fin = datetime(2026, 4, 15, 17, 30)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
     assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
-    assert marcadas.salida == datetime(2026, 4, 15, 20, 0)
+    assert marcadas.salida == datetime(2026, 4, 15, 17, 0)
 
 
-def test_parear_solo_una_unknown_no_se_reutiliza() -> None:
-    """Una única marcada UNKNOWN se asigna a entrada, la salida queda en None."""
-    raws = [_raw("2026-04-15T08:00:00")]
+def test_parear_solo_marcadas_antes_de_cutoff_salida_none() -> None:
+    """Empleado marcó entrada pero no marcó salida → INCOMPLETO con
+    entrada poblada."""
+    raws = [
+        _raw("2026-04-15T08:00:00"),
+        _raw("2026-04-15T08:30:00"),
+    ]
     inicio = datetime(2026, 4, 15, 7, 50)
     fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
     assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
     assert marcadas.salida is None
 
 
-def test_parear_descarta_marcadas_fuera_de_ventana() -> None:
+def test_parear_solo_marcadas_despues_de_cutoff_entrada_none() -> None:
+    """Solo hay marcadas después del cutoff: el empleado no marcó entrada
+    o llegó muy tarde — entrada queda None, salida = última."""
     raws = [
-        _raw("2026-04-14T23:00:00"),  # día anterior, fuera
-        _raw("2026-04-15T08:00:00", tipo=TipoMarcada.CHECK_IN.value),
-        _raw("2026-04-15T17:00:00", tipo=TipoMarcada.CHECK_OUT.value),
-        _raw("2026-04-15T20:00:00"),  # UNKNOWN después del fin de ventana, fuera
+        _raw("2026-04-15T13:00:00"),
+        _raw("2026-04-15T17:00:00"),
     ]
     inicio = datetime(2026, 4, 15, 7, 50)
     fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
+    assert marcadas.entrada is None
+    assert marcadas.salida == datetime(2026, 4, 15, 17, 0)
+
+
+def test_parear_marcada_justo_en_cutoff_cuenta_como_entrada() -> None:
+    """La marcada exactamente en el cutoff (ts == cutoff) cuenta como
+    entrada (la inclusión es ``<=``)."""
+    raws = [_raw("2026-04-15T09:00:00")]  # exactamente en cutoff 09:00
+    inicio = datetime(2026, 4, 15, 7, 50)
+    fin = datetime(2026, 4, 15, 17, 30)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
+    assert marcadas.entrada == datetime(2026, 4, 15, 9, 0)
+    assert marcadas.salida is None
+
+
+def test_parear_descarta_marcadas_fuera_de_ventana() -> None:
+    """Las marcadas fuera de [inicio, fin] se descartan antes de aplicar
+    la regla de cutoff."""
+    raws = [
+        _raw("2026-04-14T23:00:00"),  # día anterior — fuera
+        _raw("2026-04-15T08:00:00"),  # entrada válida
+        _raw("2026-04-15T17:00:00"),  # salida válida
+        _raw("2026-04-15T20:00:00"),  # después de fin — fuera
+    ]
+    inicio = datetime(2026, 4, 15, 7, 50)
+    fin = datetime(2026, 4, 15, 17, 30)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
     assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
     assert marcadas.salida == datetime(2026, 4, 15, 17, 0)
 
@@ -256,32 +312,45 @@ def test_parear_sin_marcadas_en_ventana_retorna_ambos_none() -> None:
     raws = [_raw("2026-04-14T23:00:00"), _raw("2026-04-16T01:00:00")]
     inicio = datetime(2026, 4, 15, 7, 50)
     fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
     assert marcadas.entrada is None
     assert marcadas.salida is None
 
 
-def test_parear_solo_check_in_sin_check_out() -> None:
-    """Empleado marcó entrada pero olvidó marcar salida (todo explícito)."""
-    raws = [_raw("2026-04-15T08:00:00", tipo=TipoMarcada.CHECK_IN.value)]
-    inicio = datetime(2026, 4, 15, 7, 50)
-    fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
-    assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
-    assert marcadas.salida is None
-
-
-def test_parear_check_in_explicito_mas_unknown_tardio_usa_unknown_como_salida() -> None:
-    """Fallback: hay CHECK_IN pero no CHECK_OUT → UNKNOWN tardío cubre salida."""
+def test_parear_ignora_tipo_marcada() -> None:
+    """Sub-2.7d: el algoritmo NO depende del tipo_marcada del K40.
+    Una marcada CHECK_OUT antes del cutoff se trata como entrada igual,
+    porque la HORA del día es la fuente de verdad."""
     raws = [
-        _raw("2026-04-15T08:00:00", tipo=TipoMarcada.CHECK_IN.value),
-        _raw("2026-04-15T17:00:00"),  # UNKNOWN — usada como salida vía fallback
+        _raw(
+            "2026-04-15T08:00:00", tipo=TipoMarcada.CHECK_OUT.value
+        ),  # tipo "salida" pero antes del cutoff
+        _raw(
+            "2026-04-15T17:00:00", tipo=TipoMarcada.CHECK_IN.value
+        ),  # tipo "entrada" pero después del cutoff
     ]
     inicio = datetime(2026, 4, 15, 7, 50)
     fin = datetime(2026, 4, 15, 17, 30)
-    marcadas = parear_marcadas(raws, inicio, fin)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
+    # La hora manda — el tipo del reloj se ignora.
     assert marcadas.entrada == datetime(2026, 4, 15, 8, 0)
     assert marcadas.salida == datetime(2026, 4, 15, 17, 0)
+
+
+def test_parear_caso_real_K40_4_marcadas_todas_check_out() -> None:
+    """Caso reproducible del K40 estándar: el reloj reporta TODAS las
+    marcadas como CHECK_OUT. Sub-2.7d resuelve esto correctamente."""
+    raws = [
+        _raw("2026-04-15T07:55:00", tipo=TipoMarcada.CHECK_OUT.value),
+        _raw("2026-04-15T08:02:00", tipo=TipoMarcada.CHECK_OUT.value),  # ruido entrada
+        _raw("2026-04-15T16:45:00", tipo=TipoMarcada.CHECK_OUT.value),  # ruido salida
+        _raw("2026-04-15T17:05:00", tipo=TipoMarcada.CHECK_OUT.value),
+    ]
+    inicio = datetime(2026, 4, 15, 7, 50)
+    fin = datetime(2026, 4, 15, 17, 30)
+    marcadas = parear_marcadas(raws, inicio, fin, _cutoff_default())
+    assert marcadas.entrada == datetime(2026, 4, 15, 7, 55)
+    assert marcadas.salida == datetime(2026, 4, 15, 17, 5)
 
 
 # ── derivar_estado ───────────────────────────────────────────────────────────
@@ -487,21 +556,24 @@ def test_estado_turno_solo_lunes() -> None:
 
 
 def test_flujo_completo_empleado_tarde() -> None:
-    """Flujo integrado: ventana → parear → derivar, con llegada tarde."""
+    """Flujo integrado: ventana → cutoff → parear → derivar, con llegada tarde."""
     turno = _turno(hora_entrada="08:00", hora_salida="17:00", tol_entrada=10, tol_salida=5)
     raws = [
         _raw("2026-04-15T08:15:00", tipo=TipoMarcada.CHECK_IN.value),
         _raw("2026-04-15T17:00:00", tipo=TipoMarcada.CHECK_OUT.value),
     ]
     inicio, fin = ventana_del_dia(turno, "2026-04-15")
-    marcadas = parear_marcadas(raws, inicio, fin)
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15")
+    marcadas = parear_marcadas(raws, inicio, fin, cutoff)
     resultado = derivar_estado(marcadas, turno, "2026-04-15")
     assert resultado.estado == EstadoAsistencia.TARDE.value
     assert resultado.minutos_tarde == 15
 
 
-def test_flujo_completo_turno_nocturno_solo_unknowns() -> None:
-    """Vigilancia con reloj que no reporta tipo — solo UNKNOWN."""
+def test_flujo_completo_turno_nocturno() -> None:
+    """Turno nocturno 22:00-06:00 — cutoff = 23:00 día de entrada.
+    Marcada de 22:03 entra como entrada; marcada de 05:58 día siguiente
+    cae después del cutoff → es salida."""
     turno = _turno(
         hora_entrada="22:00",
         hora_salida="06:00",
@@ -514,7 +586,8 @@ def test_flujo_completo_turno_nocturno_solo_unknowns() -> None:
         _raw("2026-04-16T05:58:00"),
     ]
     inicio, fin = ventana_del_dia(turno, "2026-04-15")
-    marcadas = parear_marcadas(raws, inicio, fin)
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15")
+    marcadas = parear_marcadas(raws, inicio, fin, cutoff)
     resultado = derivar_estado(marcadas, turno, "2026-04-15")
     assert resultado.estado == EstadoAsistencia.PRESENTE.value
     assert resultado.hora_entrada_real == "22:03:00"
@@ -543,7 +616,8 @@ def test_flujo_completo_empleado_marca_en_varios_relojes() -> None:
         ),
     ]
     inicio, fin = ventana_del_dia(turno, "2026-04-15")
-    marcadas = parear_marcadas(raws, inicio, fin)
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15")
+    marcadas = parear_marcadas(raws, inicio, fin, cutoff)
     resultado = derivar_estado(marcadas, turno, "2026-04-15")
     assert resultado.estado == EstadoAsistencia.PRESENTE.value
 
@@ -557,7 +631,8 @@ def test_flujo_completo_salida_al_dia_siguiente_queda_fuera_de_turno_diurno() ->
         _raw("2026-04-16T02:00:00", tipo=TipoMarcada.CHECK_OUT.value),  # día siguiente
     ]
     inicio, fin = ventana_del_dia(turno, "2026-04-15")
-    marcadas = parear_marcadas(raws, inicio, fin)
+    cutoff = cutoff_entrada_del_turno(turno, "2026-04-15")
+    marcadas = parear_marcadas(raws, inicio, fin, cutoff)
     resultado = derivar_estado(marcadas, turno, "2026-04-15")
     # Entrada OK pero salida no llegó dentro de la ventana → INCOMPLETO
     assert resultado.estado == EstadoAsistencia.INCOMPLETO.value
@@ -567,8 +642,9 @@ def test_flujo_completo_salida_al_dia_siguiente_queda_fuera_de_turno_diurno() ->
 
 def test_parear_timestamp_invalido_lanza_value_error() -> None:
     raws = [_raw("not-a-timestamp")]
+    cutoff = datetime(2026, 4, 15, 9, 0)
     with pytest.raises(ValueError, match="Timestamp inválido"):
-        parear_marcadas(raws, datetime(2026, 4, 15), datetime(2026, 4, 16))
+        parear_marcadas(raws, datetime(2026, 4, 15), datetime(2026, 4, 16), cutoff)
 
 
 # ── Edge: delta de segundos se trunca hacia abajo ────────────────────────────

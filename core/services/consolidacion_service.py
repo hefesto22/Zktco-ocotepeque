@@ -60,6 +60,7 @@ from core.services.audit_logger import AuditLogger
 from core.services.consolidacion_algorithm import (
     derivar_estado,
     estado_no_trabaja,
+    cutoff_entrada_del_turno,
     parear_marcadas,
     resolver_turno_en_fecha,
     ventana_del_dia,
@@ -362,7 +363,12 @@ class ConsolidacionService:
         # Turno aplica ese día: buscamos marcadas dentro de la ventana.
         assert turno is not None  # garantizado por estado_no_trabaja
         inicio_ventana, fin_ventana = ventana_del_dia(turno, fecha_iso)
-        marcadas = parear_marcadas(raws_del_empleado, inicio_ventana, fin_ventana)
+        # Sub-2.7d: el cutoff define la frontera "entrada vs salida"
+        # basada en hora_entrada del turno + 60 min, en lugar de
+        # confiar en el tipo_marcada del K40 (que el reloj estándar
+        # no diferencia al pulsar).
+        cutoff = cutoff_entrada_del_turno(turno, fecha_iso)
+        marcadas = parear_marcadas(raws_del_empleado, inicio_ventana, fin_ventana, cutoff)
         derivado = derivar_estado(marcadas, turno, fecha_iso)
 
         return Asistencia(

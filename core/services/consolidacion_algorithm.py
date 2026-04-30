@@ -6,12 +6,29 @@ empleado y un día:
     1. Qué turno le aplicaba (consultando su historial de asignaciones).
     2. Qué marcadas pertenecen a ese día (ventana temporal correcta,
        incluyendo turnos que cruzan medianoche).
-    3. Cuáles son la entrada y la salida (algoritmo híbrido:
-       CHECK_IN/CHECK_OUT explícitos si el reloj los marcó, fallback a
-       primera/última marcada si todo viene como ``UNKNOWN`` —
-       Decisión 5 aprobada).
+    3. Cuáles son la entrada y la salida (algoritmo "ventana de entrada"
+       — Sub-2.7d, decisión 6).
     4. Qué estado final de asistencia corresponde (aplicando tolerancias
        de entrada y salida configuradas por turno).
+
+Algoritmo "ventana de entrada" (Sub-2.7d):
+    El K40 (firmware estándar ZKTeco) NO distingue entrada vs salida al
+    pulsar — todas las marcadas suelen llegar como CHECK_OUT o UNKNOWN.
+    En vez de confiar en ese campo, deducimos por HORA DEL DÍA:
+
+        cutoff_entrada = hora_oficial_entrada + ``VENTANA_ENTRADA_MIN``
+        - Marcadas con timestamp <= cutoff: candidatas a ENTRADA.
+          La primera (cronológica) es la entrada. Las demás se ignoran
+          como ruido (el operador presionó la huella varias veces al
+          llegar — todas valen como una sola entrada).
+        - Marcadas con timestamp > cutoff: candidatas a SALIDA.
+          La última es la salida. Igual: si presionó varias veces al
+          irse, todas se pliegan en la última.
+
+    El campo ``tipo_marcada`` del raw queda como auditoría histórica
+    pero NO se usa para el pareo. Esto generaliza al hecho que en la
+    mayoría de relojes ZKTeco low-end el operador no presiona la tecla
+    de entrada/salida explícita — solo apoya el dedo.
 
 Se extrae a un módulo aparte — separado de ``ConsolidacionService`` —
 porque son funciones puras sin side effects. Esto permite testearlas
@@ -34,8 +51,19 @@ from typing import List, Optional, Tuple
 
 from core.models.asistencia import EstadoAsistencia
 from core.models.empleado_turno import EmpleadoTurno
-from core.models.registro_raw import RegistroRaw, TipoMarcada
+from core.models.registro_raw import RegistroRaw
 from core.models.turno import Turno, dia_aplica
+
+# Minutos después de la hora oficial de entrada que aún cuentan como
+# "candidata a entrada". Sub-2.7d: el operador puede apoyar la huella
+# en cualquier momento dentro de esta franja al llegar; cualquier
+# marcada posterior al cutoff cuenta como salida.
+#
+# 60 cubre con holgura los turnos típicos de la municipalidad
+# (08:00-17:00 → cutoff 09:00). Si una organización quisiera más
+# tolerancia, este valor se podría mover a config.py o a un campo del
+# turno; por ahora hardcodeado para mantener simplicidad.
+VENTANA_ENTRADA_MINUTOS_DEFAULT: int = 60
 
 # ── Formatos ──────────────────────────────────────────────────────────────────
 
@@ -160,30 +188,64 @@ def ventana_del_dia(turno: Turno, fecha_iso: str) -> Tuple[datetime, datetime]:
     return inicio_ventana, fin_ventana
 
 
-# ── Pareo de marcadas (algoritmo híbrido) ─────────────────────────────────────
+# ── Cutoff de entrada (Sub-2.7d) ──────────────────────────────────────────────
+
+
+def cutoff_entrada_del_turno(
+    turno: Turno,
+    fecha_iso: str,
+    ventana_minutos: int = VENTANA_ENTRADA_MINUTOS_DEFAULT,
+) -> datetime:
+    """Calcula el límite temporal entre "candidato a entrada" y "candidato a salida".
+
+    El cutoff es la hora oficial de entrada del turno desplazada
+    ``ventana_minutos`` hacia adelante. Cualquier marcada con timestamp
+    <= cutoff cuenta como entrada (la primera gana); el resto cuenta
+    como salida (la última gana).
+
+    Args:
+        turno: Turno vigente del empleado ese día.
+        fecha_iso: Día de ENTRADA del turno, ``"YYYY-MM-DD"``.
+        ventana_minutos: Cuántos minutos después de la entrada oficial
+            siguen contando como zona de entrada. Default 60.
+
+    Returns:
+        ``datetime`` naive marcando el cutoff.
+    """
+    dia = _parse_fecha(fecha_iso, campo="fecha_iso")
+    hora_entrada = _parse_hora(turno.hora_entrada, campo="hora_entrada")
+    return datetime.combine(dia, hora_entrada) + timedelta(minutes=ventana_minutos)
+
+
+# ── Pareo de marcadas (algoritmo "ventana de entrada", Sub-2.7d) ─────────────
 
 
 def parear_marcadas(
     registros: List[RegistroRaw],
     inicio_ventana: datetime,
     fin_ventana: datetime,
+    cutoff_entrada: datetime,
 ) -> MarcadasDelDia:
     """Determina la entrada y la salida efectivas para un grupo de marcadas.
 
-    Algoritmo híbrido (Decisión 5 aprobada):
+    Algoritmo "ventana de entrada" (Sub-2.7d, decisión 6):
 
-        - Filtra primero las marcadas dentro de la ventana temporal.
-        - Si al menos una marcada es ``CHECK_IN`` o ``OVERTIME_IN``:
-              entrada = primera (por timestamp ASC) de ese subconjunto.
-        - Si al menos una marcada es ``CHECK_OUT`` o ``OVERTIME_OUT``:
-              salida = última (por timestamp DESC) de ese subconjunto.
-        - Si la entrada quedó en ``None`` pero hay marcadas ``UNKNOWN``:
-              fallback — primera UNKNOWN como entrada.
-        - Si la salida quedó en ``None`` pero hay marcadas ``UNKNOWN``:
-              fallback — última UNKNOWN como salida.
-        - Caso patológico: si la única marcada UNKNOWN ya se usó como
-          entrada en el fallback, NO se reutiliza para salida — la salida
-          queda ``None`` y se emite INCOMPLETO aguas arriba.
+        1. Filtra marcadas dentro de ``[inicio_ventana, fin_ventana]``.
+        2. Las que cayeron <= ``cutoff_entrada`` son candidatas a ENTRADA.
+           La PRIMERA (cronológica) gana — las posteriores se ignoran
+           como ruido (el operador apoyó la huella varias veces).
+        3. Las que cayeron > ``cutoff_entrada`` son candidatas a SALIDA.
+           La ÚLTIMA gana — el resto son intermedias (ej. si abrió la
+           huella varias veces antes de irse).
+        4. NO se inspecciona ``tipo_marcada``: el K40 estándar reporta
+           todo como CHECK_OUT/UNKNOWN, así que no es confiable.
+
+    Casos borde:
+        - Sin marcadas en la ventana → ``(None, None)`` → AUSENTE.
+        - Solo marcadas <= cutoff → entrada poblada, salida ``None`` →
+          INCOMPLETO (entró pero no marcó salida).
+        - Solo marcadas > cutoff → entrada ``None``, salida poblada →
+          INCOMPLETO (no marcó entrada o marcó muy tarde).
 
     Args:
         registros: Marcadas candidatas (cualquier orden; se ordena
@@ -193,6 +255,8 @@ def parear_marcadas(
             se descartan).
         fin_ventana: Límite superior inclusive (marcadas posteriores se
             descartan).
+        cutoff_entrada: Frontera temporal entrada vs salida. Típicamente
+            ``cutoff_entrada_del_turno(turno, fecha)``.
 
     Returns:
         ``MarcadasDelDia(entrada, salida)`` con ``datetime`` naive o
@@ -202,32 +266,17 @@ def parear_marcadas(
     if not en_ventana:
         return MarcadasDelDia(entrada=None, salida=None)
 
-    entradas_explicitas = [r for r in en_ventana if r.tipo_marcada in _TIPOS_ENTRADA]
-    salidas_explicitas = [r for r in en_ventana if r.tipo_marcada in _TIPOS_SALIDA]
-    unknowns = [r for r in en_ventana if r.tipo_marcada == TipoMarcada.UNKNOWN.value]
-
-    entrada = _primer_timestamp(entradas_explicitas)
-    salida = _ultimo_timestamp(salidas_explicitas)
-
-    if entrada is None and unknowns:
-        entrada = _parse_timestamp(unknowns[0].timestamp)
-    if salida is None:
-        # Para no reutilizar el UNKNOWN que ya usamos como entrada, miramos
-        # los UNKNOWN desde el final y exigimos que no coincidan con `entrada`.
-        for registro in reversed(unknowns):
-            ts = _parse_timestamp(registro.timestamp)
-            if ts != entrada:
-                salida = ts
-                break
+    entrada: Optional[datetime] = None
+    salida: Optional[datetime] = None
+    for ts in (_parse_timestamp(r.timestamp) for r in en_ventana):
+        if ts <= cutoff_entrada:
+            # Primera marcada en zona de entrada gana; las demás se ignoran.
+            if entrada is None:
+                entrada = ts
+        else:
+            # En zona de salida la última gana — sobreescribimos en cada paso.
+            salida = ts
     return MarcadasDelDia(entrada=entrada, salida=salida)
-
-
-_TIPOS_ENTRADA: frozenset[str] = frozenset(
-    {TipoMarcada.CHECK_IN.value, TipoMarcada.OVERTIME_IN.value}
-)
-_TIPOS_SALIDA: frozenset[str] = frozenset(
-    {TipoMarcada.CHECK_OUT.value, TipoMarcada.OVERTIME_OUT.value}
-)
 
 
 def _filtrar_y_ordenar(
@@ -243,20 +292,6 @@ def _filtrar_y_ordenar(
             dentro.append((ts, r))
     dentro.sort(key=lambda par: par[0])
     return [r for _, r in dentro]
-
-
-def _primer_timestamp(registros: List[RegistroRaw]) -> Optional[datetime]:
-    """Devuelve el menor timestamp de la lista, o ``None`` si está vacía."""
-    if not registros:
-        return None
-    return min(_parse_timestamp(r.timestamp) for r in registros)
-
-
-def _ultimo_timestamp(registros: List[RegistroRaw]) -> Optional[datetime]:
-    """Devuelve el mayor timestamp de la lista, o ``None`` si está vacía."""
-    if not registros:
-        return None
-    return max(_parse_timestamp(r.timestamp) for r in registros)
 
 
 # ── Derivación del estado de asistencia ───────────────────────────────────────
