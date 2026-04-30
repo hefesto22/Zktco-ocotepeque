@@ -5,15 +5,18 @@ from __future__ import annotations
 from core.models import permissions
 
 
-def test_all_permissions_contiene_los_7() -> None:
-    """Debe haber exactamente 7 permisos según la matriz del PRD."""
-    assert len(permissions.ALL_PERMISSIONS) == 7
+def test_all_permissions_contiene_los_8() -> None:
+    """Debe haber exactamente 8 permisos: los 7 del PRD original + manage_roles
+    (Sub-2.7a separó MANAGE_USERS y MANAGE_ROLES para que ADMIN gestione
+    usuarios sin tocar la matriz de roles)."""
+    assert len(permissions.ALL_PERMISSIONS) == 8
 
 
 def test_cada_constante_esta_en_all_permissions() -> None:
     """Toda constante individual debe aparecer en el set agregador."""
     esperados = {
         permissions.MANAGE_USERS,
+        permissions.MANAGE_ROLES,
         permissions.MANAGE_SETTINGS,
         permissions.MANAGE_EMPLOYEES,
         permissions.RUN_ZKTECO_SYNC,

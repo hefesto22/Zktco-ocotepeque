@@ -440,6 +440,88 @@ class DuplicateDispositivoEndpointError(SincronizacionError):
         self.puerto = puerto
 
 
+# ── Errores de administración de usuarios (Sub-2.7a) ──────────────────────────
+
+
+class UsuarioAdminError(Exception):
+    """Clase base para errores del módulo de administración de usuarios."""
+
+
+class UsuarioNotFoundError(UsuarioAdminError):
+    """No existe un usuario con ese id."""
+
+    def __init__(self, user_id: int) -> None:
+        super().__init__(f"No se encontró el usuario con id {user_id}.")
+        self.user_id = user_id
+
+
+class InvalidUsernameError(UsuarioAdminError):
+    """El username no cumple el formato (3-32 chars, solo alfanumérico/.-_)."""
+
+    def __init__(self, username: str) -> None:
+        super().__init__(
+            f"El nombre de usuario '{username}' no es válido. "
+            "Debe tener entre 3 y 32 caracteres y solo letras, números, "
+            "puntos, guiones o guiones bajos."
+        )
+        self.username = username
+
+
+class CannotDeactivateSelfError(UsuarioAdminError):
+    """Un usuario intentó desactivarse a sí mismo."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No puede desactivar su propia cuenta. " "Otra persona con permisos debe hacerlo."
+        )
+
+
+class CannotDeactivateOnlySuperadminError(UsuarioAdminError):
+    """Se intentó desactivar al único SUPERADMIN del sistema."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No se puede desactivar al único SUPERADMIN del sistema. "
+            "Sin SUPERADMIN activo, nadie podría administrar la app."
+        )
+
+
+class CannotAssignSuperadminRoleError(UsuarioAdminError):
+    """Un usuario sin rol SUPERADMIN intentó asignar el rol SUPERADMIN."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No tiene autorización para asignar el rol SUPERADMIN. "
+            "Solo el SUPERADMIN actual puede transferir ese rol."
+        )
+
+
+class CannotResetSuperadminPasswordError(UsuarioAdminError):
+    """Un usuario sin rol SUPERADMIN intentó resetear la password del SUPERADMIN."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No tiene autorización para cambiar la contraseña del SUPERADMIN. "
+            "Solo el propio SUPERADMIN puede hacerlo."
+        )
+
+
+class CannotChangeSelfRoleError(UsuarioAdminError):
+    """Un usuario intentó cambiar su propio rol."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No puede cambiar su propio rol. " "Otra persona con permisos debe hacerlo."
+        )
+
+
+class PasswordMismatchError(UsuarioAdminError):
+    """La nueva contraseña y su confirmación no coinciden."""
+
+    def __init__(self) -> None:
+        super().__init__("La contraseña y su confirmación no coinciden.")
+
+
 # ── Errores de consolidación (Fase 3) ─────────────────────────────────────────
 
 

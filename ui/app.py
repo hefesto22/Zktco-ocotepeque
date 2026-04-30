@@ -49,6 +49,7 @@ from core.repositories.feriado_repository_sqlite import FeriadoRepositorySQLite
 from core.repositories.registro_raw_repository_sqlite import (
     RegistroRawRepositorySQLite,
 )
+from core.repositories.rol_repository import IRolReadRepository
 from core.repositories.rol_repository_sqlite import RolRepositorySQLite
 from core.repositories.sincronizacion_repository import (
     ISincronizacionReadRepository,
@@ -72,6 +73,7 @@ from core.services.session import Session
 from core.services.setup_wizard_service import SetupWizardService
 from core.services.sincronizacion_service import SincronizacionService
 from core.services.turno_service import TurnoService
+from core.services.usuario_admin_service import UsuarioAdminService
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.exporters.xlsx_asistencia_exporter import XlsxAsistenciaExporter
@@ -87,6 +89,7 @@ from ui.controllers.reporte_controller import ReporteController
 from ui.controllers.setup_controller import SetupController
 from ui.controllers.sincronizacion_controller import SincronizacionController
 from ui.controllers.turnos_controller import TurnosController
+from ui.controllers.usuarios_controller import UsuariosController
 from ui.views.asistencia_view import AsistenciaView
 from ui.views.configuracion_view import ConfiguracionView
 from ui.views.empleados_view import EmpleadosView
@@ -96,6 +99,7 @@ from ui.views.reportes_view import ReportesView
 from ui.views.setup_wizard_window import SetupWizardFrame
 from ui.views.sincronizacion_view import SincronizacionView
 from ui.views.turnos_view import TurnosView
+from ui.views.usuarios_view import UsuariosView
 
 
 class _Services:
@@ -118,8 +122,10 @@ class _Services:
         asistencia: AsistenciaService,
         reporte: ReporteService,
         dispositivo_config: DispositivoConfigService,
+        usuario_admin: UsuarioAdminService,
         dispositivo_read: IDispositivoReadRepository,
         sincronizacion_read: ISincronizacionReadRepository,
+        rol_read: IRolReadRepository,
     ) -> None:
         self.auth = auth
         self.permission = permission
@@ -131,8 +137,10 @@ class _Services:
         self.asistencia = asistencia
         self.reporte = reporte
         self.dispositivo_config = dispositivo_config
+        self.usuario_admin = usuario_admin
         self.dispositivo_read = dispositivo_read
         self.sincronizacion_read = sincronizacion_read
+        self.rol_read = rol_read
 
 
 def run() -> int:
@@ -262,6 +270,15 @@ def _build_services(database: Database) -> _Services:
         audit_logger=audit_logger,
     )
 
+    usuario_admin_service = UsuarioAdminService(
+        usuario_read=usuario_repo,
+        usuario_write=usuario_repo,
+        rol_read=rol_repo,
+        hasher=hasher,
+        password_policy=password_policy,
+        audit_logger=audit_logger,
+    )
+
     turno_service = TurnoService(
         turno_read=turno_repo,
         turno_write=turno_repo,
@@ -327,8 +344,10 @@ def _build_services(database: Database) -> _Services:
         asistencia=asistencia_service,
         reporte=reporte_service,
         dispositivo_config=dispositivo_config_service,
+        usuario_admin=usuario_admin_service,
         dispositivo_read=dispositivo_repo,
         sincronizacion_read=sincronizacion_repo,
+        rol_read=rol_repo,
     )
 
 
@@ -430,6 +449,7 @@ class _Router:
         # Factories de vistas reales de Fase 2. Cada code ausente del
         # dict cae al PlaceholderView genérico del MainFrame.
         view_factories: dict[str, ViewFactory] = {
+            "users": self._build_usuarios_factory(session),
             "settings": self._build_configuracion_factory(session),
             "shifts": self._build_turnos_factory(session),
             "employees": self._build_empleados_factory(session),
@@ -451,6 +471,25 @@ class _Router:
         # el futuro despacho asíncrono lo gestionará cada controller con
         # el widget actual.
         self._swap(frame)
+
+    def _build_usuarios_factory(self, session: Session) -> ViewFactory:
+        """Devuelve una factory que construye la vista de Usuarios y roles.
+
+        Mismo patrón que las demás factories. El controller se instancia
+        una vez con la sesión; la factory puede invocarse múltiples veces
+        y devuelve una vista nueva cada vez (reusando el mismo controller).
+        """
+        usuarios_controller = UsuariosController(
+            session=session,
+            permission_service=self._services.permission,
+            usuario_admin_service=self._services.usuario_admin,
+            rol_read=self._services.rol_read,
+        )
+
+        def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
+            return UsuariosView(parent, controller=usuarios_controller)
+
+        return factory
 
     def _build_configuracion_factory(self, session: Session) -> ViewFactory:
         """Devuelve una factory que construye la vista de Configuración.

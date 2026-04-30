@@ -42,7 +42,10 @@ def test_get_by_code_admin(repo: RolRepositorySQLite) -> None:
     rol = repo.get_by_code(perms.ROLE_ADMIN)
     assert rol is not None
     assert rol.id == 2
-    assert perms.MANAGE_USERS not in rol.permissions
+    # Sub-2.7a: ADMIN ahora tiene manage_users (gestiona usuarios) pero
+    # NO manage_roles (no puede tocar la matriz de roles).
+    assert perms.MANAGE_USERS in rol.permissions
+    assert perms.MANAGE_ROLES not in rol.permissions
     assert perms.MANAGE_EMPLOYEES in rol.permissions
 
 

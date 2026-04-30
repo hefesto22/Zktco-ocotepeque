@@ -20,6 +20,7 @@ from typing import Final, FrozenSet
 # ── Códigos de permiso ────────────────────────────────────────────────────────
 
 MANAGE_USERS: Final[str] = "manage_users"
+MANAGE_ROLES: Final[str] = "manage_roles"
 MANAGE_SETTINGS: Final[str] = "manage_settings"
 MANAGE_EMPLOYEES: Final[str] = "manage_employees"
 RUN_ZKTECO_SYNC: Final[str] = "run_zkteco_sync"
@@ -30,6 +31,7 @@ VIEW_EXPORT_HISTORY: Final[str] = "view_export_history"
 ALL_PERMISSIONS: Final[FrozenSet[str]] = frozenset(
     {
         MANAGE_USERS,
+        MANAGE_ROLES,
         MANAGE_SETTINGS,
         MANAGE_EMPLOYEES,
         RUN_ZKTECO_SYNC,

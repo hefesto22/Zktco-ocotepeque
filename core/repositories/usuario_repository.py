@@ -94,6 +94,45 @@ class IUsuarioWriteRepository(ABC):
         """Borra físicamente el usuario.
 
         Nota: para desactivar temporalmente sin perder historial, usar el
-        flag ``is_active`` vía un update específico (aún no expuesto — se
-        agregará cuando un caso de uso lo requiera, YAGNI).
+        flag ``is_active`` vía ``update_profile``. ``delete`` queda solo
+        como herramienta de mantenimiento (ej. limpiar usuarios de prueba
+        antes de poner en producción) — la UI usa ``update_profile`` con
+        ``is_active=False`` para soft-delete.
+        """
+
+    @abstractmethod
+    def update_profile(
+        self,
+        user_id: int,
+        full_name: str,
+        role_id: int,
+        is_active: bool,
+    ) -> None:
+        """Actualiza los campos editables desde la UI de administración.
+
+        Expone EXACTAMENTE estos 3 campos para que el módulo de admin
+        no pueda, por error, escribir ``password_hash``, ``failed_attempts``
+        o ``locked_until``. Esos campos tienen métodos dedicados
+        (``update_password_hash``, ``update_login_state``, ``unlock_account``).
+
+        Args:
+            user_id: PK del usuario a actualizar.
+            full_name: Nuevo nombre completo (no vacío — service valida).
+            role_id: Nuevo rol asignado. Debe existir en ``roles``.
+            is_active: ``True`` activa la cuenta, ``False`` la desactiva.
+
+        Raises:
+            sqlite3.IntegrityError: Si ``role_id`` viola la FK o si el
+                trigger ``trg_enforce_single_superadmin_update`` aborta
+                la operación (ya hay un SUPERADMIN distinto).
+        """
+
+    @abstractmethod
+    def unlock_account(self, user_id: int) -> None:
+        """Desbloquea una cuenta que se bloqueó por intentos fallidos.
+
+        Resetea ``failed_attempts = 0`` y ``locked_until = NULL``. Útil
+        cuando el operador llama por teléfono al admin diciendo
+        "olvidé mi contraseña, me bloqueé tras varios intentos".
+        Idempotente: invocarlo sobre una cuenta ya desbloqueada es no-op.
         """

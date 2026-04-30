@@ -151,3 +151,33 @@ class UsuarioRepositorySQLite(IUsuarioReadRepository, IUsuarioWriteRepository):
     def delete(self, user_id: int) -> None:
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM usuarios WHERE id = ?", (user_id,))
+
+    def update_profile(
+        self,
+        user_id: int,
+        full_name: str,
+        role_id: int,
+        is_active: bool,
+    ) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE usuarios SET "
+                "full_name = ?, role_id = ?, is_active = ?, updated_at = ? "
+                "WHERE id = ?",
+                (
+                    full_name,
+                    role_id,
+                    1 if is_active else 0,
+                    _utc_now_iso(),
+                    user_id,
+                ),
+            )
+
+    def unlock_account(self, user_id: int) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE usuarios SET "
+                "failed_attempts = 0, locked_until = NULL, updated_at = ? "
+                "WHERE id = ?",
+                (_utc_now_iso(), user_id),
+            )
