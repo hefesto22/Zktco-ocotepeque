@@ -77,10 +77,19 @@ class PyzkAdapter(IZKTecoAdapter):
         self._validate_inputs(dispositivo, desde, hasta)
         assert dispositivo.id is not None  # validado arriba, para mypy
 
+        # ``ommit_ping=True`` desactiva el ICMP ping interno que pyzk hace
+        # antes del CONNECT. Ese check falla en redes con ICMP filtrado (firewalls
+        # corporativos, AnyDesk redirigiendo, segmentos con ACL restrictiva) aunque
+        # el TCP al puerto 4370 esté perfectamente accesible. Validado en campo
+        # 2026-04-29 con K40 firmware Ver 6.60: sin la flag → timeout; con la flag
+        # → connect inmediato. La verificación de "device alive" la hace nuestra
+        # app en SincronizacionView (botón Sincronizar) capturando ZKConnectionError
+        # del propio CONNECT TCP — más fiable que el ping y sin falsos negativos.
         client = ZK(
             dispositivo.ip,
             port=dispositivo.puerto,
             timeout=self._timeout_seconds,
+            ommit_ping=True,
         )
         conn = self._connect(client, dispositivo)
         try:
