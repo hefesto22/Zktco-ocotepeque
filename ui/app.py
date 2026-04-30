@@ -430,6 +430,40 @@ class _Router:
         )
         self._swap(frame)
 
+    def _build_initial_zkteco_status(self) -> str:
+        """Lee la última sincronización OK de BD para el status bar.
+
+        Razón (Sub-2.7c): cuando el usuario hace logout/login, el
+        ``MainFrame`` se reconstruye desde cero y el estado
+        "última sync HH:MM" que dejó el callback de SincronizacionView
+        se perdía. Acá lo recuperamos consultando BD: si hay una sync
+        OK reciente, mostramos su timestamp; si no, "sin conexión".
+
+        Returns:
+            "sin conexión" / "última sync HH:MM" (si es de hoy) /
+            "última sync DD/MM HH:MM" (si es de otro día).
+        """
+        from datetime import datetime  # local — evita import top-level
+
+        try:
+            recientes = self._services.sincronizacion_read.list_recientes(limit=5)
+        except Exception:  # noqa: BLE001 — fallback silencioso
+            self._log.exception("Error consultando ultima sync para status bar")
+            return "sin conexión"
+        for s in recientes:
+            if s.estado != "OK" or not s.fin:
+                continue
+            try:
+                dt_utc = datetime.fromisoformat(s.fin)
+                dt_local = dt_utc.astimezone()
+            except Exception:  # noqa: BLE001
+                continue
+            hoy_local = datetime.now().astimezone().date()
+            if dt_local.date() == hoy_local:
+                return f"última sync {dt_local.strftime('%H:%M')}"
+            return f"última sync {dt_local.strftime('%d/%m %H:%M')}"
+        return "sin conexión"
+
     def _mostrar_main(self, session: Session) -> None:
         # Creamos el MainFrame primero porque el controller necesita su
         # método ``open_view`` como callback. Inyectamos el controller
@@ -464,6 +498,7 @@ class _Router:
             controller=controller,
             on_logout=self._on_logout,
             view_factories=view_factories,
+            initial_zkteco_status=self._build_initial_zkteco_status(),
         )
         main_frame_holder["frame"] = frame
 

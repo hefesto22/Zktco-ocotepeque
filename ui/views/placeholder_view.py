@@ -14,15 +14,26 @@ import customtkinter as ctk
 
 
 class PlaceholderView(ctk.CTkFrame):
-    """Vista genérica que muestra un módulo aún no implementado."""
+    """Vista genérica de módulo no implementado o pantalla de bienvenida."""
 
-    def __init__(self, master: ctk.CTkBaseClass, title: str, description: str) -> None:
+    def __init__(
+        self,
+        master: ctk.CTkBaseClass,
+        title: str,
+        description: str,
+        mostrar_aviso: bool = True,
+    ) -> None:
         """Construye el placeholder.
 
         Args:
             master: Frame/Widget padre donde se monta.
             title: Nombre del módulo (español).
             description: Texto descriptivo de qué contendrá.
+            mostrar_aviso: Si ``True`` (default), muestra
+                "Módulo en construcción — próximamente." al final. La
+                pantalla de bienvenida del ``MainFrame`` lo pasa en
+                ``False`` para no confundir al usuario en un login que
+                no es a un módulo en construcción real.
         """
         super().__init__(master, corner_radius=0)
 
@@ -43,10 +54,11 @@ class PlaceholderView(ctk.CTkFrame):
         )
         descripcion.pack(pady=(0, 24), padx=24, anchor="w")
 
-        aviso = ctk.CTkLabel(
-            self,
-            text="Módulo en construcción — próximamente.",
-            font=ctk.CTkFont(size=14, slant="italic"),
-            text_color=("gray40", "gray60"),
-        )
-        aviso.pack(pady=12, padx=24, anchor="w")
+        if mostrar_aviso:
+            aviso = ctk.CTkLabel(
+                self,
+                text="Módulo en construcción — próximamente.",
+                font=ctk.CTkFont(size=14, slant="italic"),
+                text_color=("gray40", "gray60"),
+            )
+            aviso.pack(pady=12, padx=24, anchor="w")

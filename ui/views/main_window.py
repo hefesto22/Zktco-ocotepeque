@@ -57,6 +57,7 @@ class MainFrame(ctk.CTkFrame):
         controller: MainController,
         on_logout: Callable[[], None],
         view_factories: Optional[Dict[str, ViewFactory]] = None,
+        initial_zkteco_status: str = "sin conexión",
     ) -> None:
         """Construye el frame.
 
@@ -71,12 +72,17 @@ class MainFrame(ctk.CTkFrame):
                 ``code`` abierto está en el mapa, se monta la vista real;
                 si no, cae al ``PlaceholderView`` genérico (módulo aún
                 sin implementación).
+            initial_zkteco_status: Texto inicial del segmento ZKTeco de
+                la status bar. El composition root lo construye leyendo
+                la última sincronización OK de BD para que el estado
+                persista entre logouts/logins (Sub-2.7c).
         """
         super().__init__(master, corner_radius=0)
         self._session = session
         self._controller = controller
         self._on_logout = on_logout
         self._view_factories: Dict[str, ViewFactory] = view_factories or {}
+        self._initial_zkteco_status = initial_zkteco_status
         self._log = logging.getLogger(self.__class__.__name__)
 
         # Index por code para mostrar el título/descripción en el placeholder.
@@ -166,8 +172,10 @@ class MainFrame(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, corner_radius=0, height=28)
 
         # Estado ZKTeco se guarda separado para poder refrescarlo a
-        # demanda sin reconstruir el resto del label.
-        self._zkteco_status = "sin conexión"
+        # demanda sin reconstruir el resto del label. El valor inicial
+        # lo arma el composition root leyendo la última sync OK de BD
+        # (Sub-2.7c) — así el estado persiste tras logout/login.
+        self._zkteco_status = self._initial_zkteco_status
         self._status_label = ctk.CTkLabel(
             bar,
             text=self._build_status_text(),
@@ -256,7 +264,12 @@ class MainFrame(ctk.CTkFrame):
         self._current_view = nueva
 
     def _mostrar_bienvenida(self) -> None:
-        """Monta una pantalla de bienvenida al entrar al MainWindow."""
+        """Monta una pantalla de bienvenida al entrar al MainWindow.
+
+        ``mostrar_aviso=False`` porque la bienvenida NO es un módulo en
+        construcción — el aviso "próximamente" confunde al usuario
+        cuando recién logueó (Sub-2.7c).
+        """
         bienvenida = PlaceholderView(
             self._content,
             title=f"Bienvenido, {self._session.username}",
@@ -265,6 +278,7 @@ class MainFrame(ctk.CTkFrame):
                 "Solo se muestran los módulos disponibles para su rol "
                 f"({self._session.role_code})."
             ),
+            mostrar_aviso=False,
         )
         self._montar_view(bienvenida)
 
