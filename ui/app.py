@@ -63,6 +63,7 @@ from core.services.audit_logger import AuditLogger
 from core.services.auth_service import AuthService
 from core.services.catalogo_service import CatalogoService
 from core.services.consolidacion_service import ConsolidacionService
+from core.services.dispositivo_config_service import DispositivoConfigService
 from core.services.empleado_service import EmpleadoService
 from core.services.password_policy import PasswordPolicy
 from core.services.permission_service import PermissionService
@@ -116,6 +117,7 @@ class _Services:
         sincronizacion: SincronizacionService,
         asistencia: AsistenciaService,
         reporte: ReporteService,
+        dispositivo_config: DispositivoConfigService,
         dispositivo_read: IDispositivoReadRepository,
         sincronizacion_read: ISincronizacionReadRepository,
     ) -> None:
@@ -128,6 +130,7 @@ class _Services:
         self.sincronizacion = sincronizacion
         self.asistencia = asistencia
         self.reporte = reporte
+        self.dispositivo_config = dispositivo_config
         self.dispositivo_read = dispositivo_read
         self.sincronizacion_read = sincronizacion_read
 
@@ -253,6 +256,12 @@ def _build_services(database: Database) -> _Services:
         audit_logger=audit_logger,
     )
 
+    dispositivo_config_service = DispositivoConfigService(
+        dispositivo_read=dispositivo_repo,
+        dispositivo_write=dispositivo_repo,
+        audit_logger=audit_logger,
+    )
+
     turno_service = TurnoService(
         turno_read=turno_repo,
         turno_write=turno_repo,
@@ -317,6 +326,7 @@ def _build_services(database: Database) -> _Services:
         sincronizacion=sincronizacion_service,
         asistencia=asistencia_service,
         reporte=reporte_service,
+        dispositivo_config=dispositivo_config_service,
         dispositivo_read=dispositivo_repo,
         sincronizacion_read=sincronizacion_repo,
     )
@@ -454,6 +464,7 @@ class _Router:
             session=session,
             permission_service=self._services.permission,
             catalogo_service=self._services.catalogo,
+            dispositivo_service=self._services.dispositivo_config,
         )
 
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:

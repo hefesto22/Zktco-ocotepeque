@@ -387,6 +387,59 @@ class InvalidRangoError(SincronizacionError):
         self.hasta = hasta
 
 
+# ── Errores de configuración de dispositivos (Plan B / Sub-2.4b) ──────────────
+
+
+class InvalidIPError(ValidationError):
+    """La dirección IP no tiene formato IPv4 válido.
+
+    Se valida con ``ipaddress.IPv4Address``: rechaza IPv6, notación octal,
+    octetos fuera de 0..255 y cualquier formato no canónico. El mensaje
+    es seguro para mostrar al usuario.
+
+    Attributes:
+        ip: Valor recibido (sin trim — para reportar exactamente lo que
+            tipeó el operador).
+    """
+
+    def __init__(self, ip: str) -> None:
+        super().__init__(
+            f"La dirección IP '{ip}' no es válida. "
+            "Use el formato IPv4 estándar (ej. 192.168.0.101)."
+        )
+        self.ip = ip
+
+
+class InvalidPuertoError(ValidationError):
+    """El puerto TCP está fuera del rango válido 1..65535."""
+
+    def __init__(self, puerto: int) -> None:
+        super().__init__(
+            f"El puerto '{puerto}' no es válido. " "Debe ser un número entero entre 1 y 65535."
+        )
+        self.puerto = puerto
+
+
+class DuplicateDispositivoNombreError(SincronizacionError):
+    """Ya existe un dispositivo con ese nombre."""
+
+    def __init__(self, nombre: str) -> None:
+        super().__init__(f"Ya existe un dispositivo con el nombre '{nombre}'.")
+        self.nombre = nombre
+
+
+class DuplicateDispositivoEndpointError(SincronizacionError):
+    """Ya existe un dispositivo registrado en ese ``(ip, puerto)``."""
+
+    def __init__(self, ip: str, puerto: int) -> None:
+        super().__init__(
+            f"Ya existe un dispositivo registrado en {ip}:{puerto}. "
+            "No se puede registrar el mismo endpoint dos veces."
+        )
+        self.ip = ip
+        self.puerto = puerto
+
+
 # ── Errores de consolidación (Fase 3) ─────────────────────────────────────────
 
 
