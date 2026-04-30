@@ -19,8 +19,12 @@ Doble defensa de permisos:
        el click lanzaría ``PermissionDeniedError`` y NO montaría la vista.
 
 Estado ZKTeco en la status bar:
-    - En Phase 1 mostramos "Sin conexión" fijo. En Phase 4 (módulo
-      ZKTeco) se conectará a un observable/poller real.
+    - Default al arrancar: "Sin conexión" (no se conoce historial vivo).
+    - Tras un sync OK: ``SincronizacionView`` invoca un callback que
+      llega hasta ``refresh_status_zkteco(...)`` y actualiza el texto
+      a "última sync HH:MM" (Sub-2.4c / fix cosmético post-Plan B).
+    - Phase 4 podrá reemplazar el callback por un poller en tiempo
+      real sin tocar este método.
 """
 
 from __future__ import annotations
@@ -161,20 +165,50 @@ class MainFrame(ctk.CTkFrame):
         """Barra inferior con usuario, rol y estado ZKTeco."""
         bar = ctk.CTkFrame(self, corner_radius=0, height=28)
 
-        texto = (
-            f"Usuario: {self._session.username}"
-            f"   ·   Rol: {self._session.role_code}"
-            f"   ·   ZKTeco: sin conexión"
-        )
+        # Estado ZKTeco se guarda separado para poder refrescarlo a
+        # demanda sin reconstruir el resto del label.
+        self._zkteco_status = "sin conexión"
         self._status_label = ctk.CTkLabel(
             bar,
-            text=texto,
+            text=self._build_status_text(),
             font=ctk.CTkFont(size=11),
             text_color=("gray30", "gray70"),
             anchor="w",
         )
         self._status_label.pack(padx=12, pady=4, fill="x")
         return bar
+
+    def _build_status_text(self) -> str:
+        """Compone el texto completo del status bar.
+
+        Centraliza el formato para que ``refresh_status_zkteco`` no
+        duplique el orden de los campos. El separador "·" rodeado de
+        espacios mantiene legibilidad incluso con fuentes condensadas.
+        """
+        return (
+            f"Usuario: {self._session.username}"
+            f"   ·   Rol: {self._session.role_code}"
+            f"   ·   ZKTeco: {self._zkteco_status}"
+        )
+
+    # ── API pública para refrescar el estado ZKTeco ───────────────────────
+
+    def refresh_status_zkteco(self, nuevo_estado: str) -> None:
+        """Actualiza el segmento "ZKTeco: ..." de la status bar.
+
+        Lo invoca el composition root tras un sync exitoso (vía un
+        callback inyectado en la ``SincronizacionView``). Es idempotente:
+        llamarlo dos veces seguidas con el mismo texto no causa flicker.
+
+        Args:
+            nuevo_estado: Texto que reemplaza el estado actual. Se
+                espera un string corto, en español, sin punto final
+                (ej. ``"última sync 14:32"`` o ``"sin conexión"``).
+        """
+        if nuevo_estado == self._zkteco_status:
+            return
+        self._zkteco_status = nuevo_estado
+        self._status_label.configure(text=self._build_status_text())
 
     # ── Handlers ──────────────────────────────────────────────────────────
 

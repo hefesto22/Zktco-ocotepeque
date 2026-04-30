@@ -433,7 +433,7 @@ class _Router:
             "settings": self._build_configuracion_factory(session),
             "shifts": self._build_turnos_factory(session),
             "employees": self._build_empleados_factory(session),
-            "zkteco_sync": self._build_sincronizacion_factory(session),
+            "zkteco_sync": self._build_sincronizacion_factory(session, main_frame_holder),
             "attendance": self._build_asistencia_factory(session),
             "reports": self._build_reportes_factory(session),
         }
@@ -510,7 +510,11 @@ class _Router:
 
         return factory
 
-    def _build_sincronizacion_factory(self, session: Session) -> ViewFactory:
+    def _build_sincronizacion_factory(
+        self,
+        session: Session,
+        main_frame_holder: dict[str, MainFrame],
+    ) -> ViewFactory:
         """Devuelve una factory que construye la vista de Sincronización ZKTeco.
 
         El controller se instancia una sola vez con la sesión activa. Si
@@ -518,6 +522,14 @@ class _Router:
         ``aviso_recuperacion`` — la primera construcción de la vista las
         consume y limpia el atributo, así un logout/login no re-dispara
         el aviso.
+
+        Args:
+            session: Sesión activa del usuario logueado.
+            main_frame_holder: Mismo dict mutable que se usa para
+                ``open_view_callback`` — permite resolver el ``MainFrame``
+                de manera diferida cuando el callback de sync OK se
+                dispara (la vista se construye después del MainFrame,
+                pero la factory se arma antes — necesitamos el holder).
         """
         sincronizacion_controller = SincronizacionController(
             session=session,
@@ -531,8 +543,27 @@ class _Router:
             # Solo se inyecta una vez: el banner se muestra al primer mount.
             self._huerfanas_cerradas = 0
 
+        def on_sync_completada(_resultado: Any) -> None:
+            """Refresca la status bar global tras un sync exitoso.
+
+            El texto "última sync HH:MM" usa la hora local del sistema.
+            Lo decide acá (composition root) en vez de la vista para que
+            la vista quede agnóstica del formato del label.
+            """
+            from datetime import datetime  # local — evita import top-level
+
+            frame = main_frame_holder.get("frame")
+            if frame is None:
+                return  # MainFrame aún no montado (no debería ocurrir)
+            etiqueta = f"última sync {datetime.now().strftime('%H:%M')}"
+            frame.refresh_status_zkteco(etiqueta)
+
         def factory(parent: ctk.CTkBaseClass) -> ctk.CTkBaseClass:
-            return SincronizacionView(parent, controller=sincronizacion_controller)
+            return SincronizacionView(
+                parent,
+                controller=sincronizacion_controller,
+                on_sync_completada=on_sync_completada,
+            )
 
         return factory
 

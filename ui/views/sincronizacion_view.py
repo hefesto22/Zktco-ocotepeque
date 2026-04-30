@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from tkinter import messagebox
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import customtkinter as ctk
 from tkcalendar import DateEntry
@@ -73,15 +73,22 @@ class SincronizacionView(ctk.CTkFrame):
         self,
         master: ctk.CTkBaseClass,
         controller: SincronizacionController,
+        on_sync_completada: Optional[Callable[[ResultadoSincronizacion], None]] = None,
     ) -> None:
         """Construye la vista.
 
         Args:
             master: Contenedor Tk donde se monta.
             controller: Controller ya inyectado con session + servicios.
+            on_sync_completada: Callback opcional invocado tras una
+                sincronización exitosa. El composition root lo conecta
+                al ``MainFrame`` para refrescar la status bar (Sub-2.4c).
+                Si es ``None``, la vista funciona igual pero la status
+                bar no se entera del éxito.
         """
         super().__init__(master, corner_radius=0, fg_color="transparent")
         self._controller = controller
+        self._on_sync_completada = on_sync_completada
         self._log = logging.getLogger(self.__class__.__name__)
 
         # Caché de dispositivos cargados (label → Dispositivo).
@@ -310,6 +317,15 @@ class SincronizacionView(ctk.CTkFrame):
             text_color=("#1b5e20", "#a5d6a7"),
         )
         self._pintar_resumen(resultado)
+        # Notificar al composition root para que refresque la status bar
+        # global del MainFrame con "última sync HH:MM" (Sub-2.4c).
+        if self._on_sync_completada is not None:
+            try:
+                self._on_sync_completada(resultado)
+            except Exception:  # noqa: BLE001 — el callback es del composition
+                # root; un fallo aquí jamás debe ensuciar el flujo de la
+                # vista, que ya completó su trabajo correctamente.
+                self._log.exception("Error invocando on_sync_completada")
 
     def _on_sync_err(self, exc: BaseException) -> None:
         """Callback en UI thread tras un fallo de la sincronización."""
