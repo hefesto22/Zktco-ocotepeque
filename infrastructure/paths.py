@@ -49,6 +49,7 @@ _DB_FILENAME = "zkteco_app.db"
 _DATA_SUBDIR = "data"
 _LOGS_SUBDIR = "logs"
 _EXPORTS_SUBDIR = "exports"
+_BACKUPS_SUBDIR = "backups"
 
 # Ruta a las migraciones SQL embebidas (read-only) — relativa al
 # ``resource_path`` raíz.
@@ -122,12 +123,17 @@ def exports_dir() -> Path:
     return data_dir() / _EXPORTS_SUBDIR
 
 
+def backups_dir() -> Path:
+    """Carpeta donde el backup automático guarda los snapshots de la BD."""
+    return data_dir() / _BACKUPS_SUBDIR
+
+
 def ensure_runtime_dirs() -> None:
-    """Crea ``data/``, ``data/logs/`` y ``data/exports/`` si faltan.
+    """Crea ``data/``, ``data/logs/``, ``data/exports/`` y ``data/backups/``.
 
     Idempotente: si ya existen, no hace nada. Se llama una sola vez
     al arrancar (desde ``main.py``) antes de instalar el FileHandler
     o abrir la BD.
     """
-    for path in (data_dir(), logs_dir(), exports_dir()):
+    for path in (data_dir(), logs_dir(), exports_dir(), backups_dir()):
         path.mkdir(parents=True, exist_ok=True)

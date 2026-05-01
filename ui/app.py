@@ -74,6 +74,8 @@ from core.services.setup_wizard_service import SetupWizardService
 from core.services.sincronizacion_service import SincronizacionService
 from core.services.turno_service import TurnoService
 from core.services.usuario_admin_service import UsuarioAdminService
+from infrastructure import paths
+from infrastructure.database.backup import run_daily_backup
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 from infrastructure.exporters.xlsx_asistencia_exporter import XlsxAsistenciaExporter
@@ -155,6 +157,12 @@ def run() -> int:
     if not _run_migrations(database, log):
         return 2
 
+    # Sub-3.1 production-ready: snapshot diario de la BD ANTES de que el
+    # operador toque nada. Si falla (disco lleno, permisos), loguea pero
+    # no aborta — perder un backup ocasional es preferible a impedir el
+    # arranque de la app.
+    _crear_backup_diario(log)
+
     services = _build_services(database)
 
     # Recovery de syncs huérfanas antes de arrancar la UI (Decisión 1).
@@ -186,6 +194,29 @@ def _run_migrations(database: Database, log: logging.Logger) -> bool:
     if applied:
         log.info("Migraciones aplicadas: %s", ", ".join(applied))
     return True
+
+
+def _crear_backup_diario(log: logging.Logger) -> None:
+    """Crea snapshot del día de la BD + purga snapshots > 30 días.
+
+    El error nunca se propaga: el backup es best-effort. Si falla, el
+    operador todavía puede usar la app y la falla queda en el log para
+    que mantenimiento la revise.
+    """
+    try:
+        backup = run_daily_backup(
+            db_path=config.DATABASE_PATH,
+            backup_dir=paths.backups_dir(),
+            max_age_days=config.BACKUP_MAX_AGE_DAYS,
+        )
+        if backup is not None:
+            log.info("Backup diario creado: %s", backup)
+        else:
+            log.debug("Backup diario omitido (ya existía o no aplica).")
+    except Exception:  # noqa: BLE001
+        # Defensa de último recurso: cualquier excepción inesperada se
+        # loguea pero NO debe abortar el arranque de la app.
+        log.exception("Excepción inesperada en backup diario; se ignora.")
 
 
 def _recover_huerfanas_al_arranque(

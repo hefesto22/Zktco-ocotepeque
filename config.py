@@ -69,3 +69,9 @@ LOG_FORMAT: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 LOG_FILE_MAX_BYTES: int = 5 * 1024 * 1024
 LOG_FILE_BACKUP_COUNT: int = 3
 LOG_FILE_NAME: str = "app.log"
+
+# ── Backup automático de la BD (Sub-3.1) ──────────────────────────────────────
+# Cantidad de días que se conservan los snapshots diarios en
+# ``data/backups/``. Más allá de ese umbral se borran al arrancar la app.
+# 0 = retención infinita (no recomendado, llena disco).
+BACKUP_MAX_AGE_DAYS: int = 30
