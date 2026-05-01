@@ -102,6 +102,7 @@ from ui.views.setup_wizard_window import SetupWizardFrame
 from ui.views.sincronizacion_view import SincronizacionView
 from ui.views.turnos_view import TurnosView
 from ui.views.usuarios_view import UsuariosView
+from ui.views.welcome_view import ResumenSistema
 
 
 class _Services:
@@ -495,6 +496,39 @@ class _Router:
             return f"última sync {dt_local.strftime('%d/%m %H:%M')}"
         return "sin conexión"
 
+    def _build_resumen_sistema(self) -> ResumenSistema:
+        """Sub-3.4: arma el ``ResumenSistema`` que la WelcomeView muestra.
+
+        Best-effort: si alguna consulta falla, el campo correspondiente
+        cae a un valor neutro y se loguea — la pantalla de bienvenida
+        nunca debe romper el login.
+        """
+        try:
+            empleados_activos = len(self._services.empleado.list_empleados(solo_activos=True))
+        except Exception:  # noqa: BLE001
+            self._log.exception("ResumenSistema: error contando empleados.")
+            empleados_activos = 0
+
+        try:
+            dispositivos_activos = len(self._services.dispositivo_read.list_active())
+        except Exception:  # noqa: BLE001
+            self._log.exception("ResumenSistema: error contando dispositivos.")
+            dispositivos_activos = 0
+
+        sync_label = self._build_initial_zkteco_status()
+        # Reusamos el helper que ya formatea "última sync HH:MM";
+        # cuando no hay sync, lo dejamos como "sin sincronización" para
+        # que se lea más natural en la card de bienvenida.
+        if sync_label == "sin conexión":
+            sync_label = "sin sincronización"
+
+        return ResumenSistema(
+            empleados_activos=empleados_activos,
+            dispositivos_activos=dispositivos_activos,
+            ultima_sync_label=sync_label,
+            app_version=config.APP_VERSION,
+        )
+
     def _mostrar_main(self, session: Session) -> None:
         # Creamos el MainFrame primero porque el controller necesita su
         # método ``open_view`` como callback. Inyectamos el controller
@@ -530,6 +564,7 @@ class _Router:
             on_logout=self._on_logout,
             view_factories=view_factories,
             initial_zkteco_status=self._build_initial_zkteco_status(),
+            resumen_sistema=self._build_resumen_sistema(),
         )
         main_frame_holder["frame"] = frame
 

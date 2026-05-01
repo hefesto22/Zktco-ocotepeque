@@ -40,6 +40,7 @@ from ui.controllers.main_controller import MainController
 from ui.guards.permission_guard import filter_visible
 from ui.menu_items import MENU_ITEMS, MenuItem
 from ui.views.placeholder_view import PlaceholderView
+from ui.views.welcome_view import ResumenSistema, WelcomeView
 
 # Factory de vista: recibe el contenedor padre y devuelve el widget a montar.
 # El composition root (``ui/app.py``) construye estas factories con los
@@ -58,6 +59,7 @@ class MainFrame(ctk.CTkFrame):
         on_logout: Callable[[], None],
         view_factories: Optional[Dict[str, ViewFactory]] = None,
         initial_zkteco_status: str = "sin conexión",
+        resumen_sistema: Optional[ResumenSistema] = None,
     ) -> None:
         """Construye el frame.
 
@@ -83,6 +85,7 @@ class MainFrame(ctk.CTkFrame):
         self._on_logout = on_logout
         self._view_factories: Dict[str, ViewFactory] = view_factories or {}
         self._initial_zkteco_status = initial_zkteco_status
+        self._resumen_sistema = resumen_sistema
         self._log = logging.getLogger(self.__class__.__name__)
 
         # Index por code para mostrar el título/descripción en el placeholder.
@@ -264,22 +267,31 @@ class MainFrame(ctk.CTkFrame):
         self._current_view = nueva
 
     def _mostrar_bienvenida(self) -> None:
-        """Monta una pantalla de bienvenida al entrar al MainWindow.
+        """Monta la pantalla de bienvenida del MainFrame.
 
-        ``mostrar_aviso=False`` porque la bienvenida NO es un módulo en
-        construcción — el aviso "próximamente" confunde al usuario
-        cuando recién logueó (Sub-2.7c).
+        Sub-3.4: si el composition root pasó un ``ResumenSistema``,
+        se monta el ``WelcomeView`` rico (saludo + stats + tip). Si no
+        — ej. tests viejos que no inyectan resumen — cae al
+        ``PlaceholderView`` legacy para preservar retrocompatibilidad.
         """
-        bienvenida = PlaceholderView(
-            self._content,
-            title=f"Bienvenido, {self._session.username}",
-            description=(
-                "Seleccione un módulo del menú lateral para comenzar. "
-                "Solo se muestran los módulos disponibles para su rol "
-                f"({self._session.role_code})."
-            ),
-            mostrar_aviso=False,
-        )
+        if self._resumen_sistema is not None:
+            bienvenida: ctk.CTkBaseClass = WelcomeView(
+                self._content,
+                username=self._session.username,
+                role_code=self._session.role_code,
+                resumen=self._resumen_sistema,
+            )
+        else:
+            bienvenida = PlaceholderView(
+                self._content,
+                title=f"Bienvenido, {self._session.username}",
+                description=(
+                    "Seleccione un módulo del menú lateral para comenzar. "
+                    "Solo se muestran los módulos disponibles para su rol "
+                    f"({self._session.role_code})."
+                ),
+                mostrar_aviso=False,
+            )
         self._montar_view(bienvenida)
 
     def _mostrar_vista_por_code(self, code: str) -> None:
