@@ -104,6 +104,15 @@ class EmpleadoTurnoRepositorySQLite(IEmpleadoTurnoReadRepository, IEmpleadoTurno
             fecha_fin=None,
         )
 
+    def cerrar_asignacion_por_id(self, asignacion_id: int, fecha_fin: str) -> None:
+        with self._db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE empleado_turnos SET fecha_fin = ? " "WHERE id = ? AND fecha_fin IS NULL",
+                (fecha_fin, asignacion_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"La asignación {asignacion_id} no existe o ya está cerrada.")
+
     def cerrar_vigente(self, empleado_id: int, fecha_fin: str) -> None:
         # Un solo UPDATE con rowcount check. Si el empleado no tiene
         # vigente, rowcount == 0 → ValueError (semántica consistente con

@@ -112,6 +112,16 @@ class EmpleadosController:
         return self._empleado.get_turno_vigente(empleado_id)
 
     @require_permission(perms.MANAGE_EMPLOYEES)
+    def list_turnos_vigentes(self, empleado_id: int) -> List[EmpleadoTurno]:
+        """Sub-3.3: todas las asignaciones vigentes del empleado."""
+        return self._empleado.list_turnos_vigentes(empleado_id)
+
+    @require_permission(perms.MANAGE_EMPLOYEES)
+    def cerrar_asignacion(self, asignacion_id: int, fecha_fin: str) -> None:
+        """Sub-3.3: cierra una asignación específica."""
+        self._empleado.cerrar_asignacion(asignacion_id, fecha_fin, self.session.user_id)
+
+    @require_permission(perms.MANAGE_EMPLOYEES)
     def get_historial_turnos(self, empleado_id: int) -> List[EmpleadoTurno]:
         """Devuelve el historial de asignaciones ordenado desc."""
         return self._empleado.get_historial_turnos(empleado_id)

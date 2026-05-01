@@ -444,6 +444,42 @@ class EmpleadoService:
         """
         return self._et_read.list_historial(empleado_id)
 
+    def list_turnos_vigentes(self, empleado_id: int) -> List[EmpleadoTurno]:
+        """Sub-3.3: todas las asignaciones vigentes del empleado.
+
+        Útil para la pantalla "Gestionar turnos" — un empleado puede
+        tener varias asignaciones cubriendo días distintos de la semana.
+        """
+        return self._et_read.list_vigentes(empleado_id)
+
+    def cerrar_asignacion(
+        self,
+        asignacion_id: int,
+        fecha_fin: str,
+        actor_user_id: int,
+    ) -> None:
+        """Sub-3.3: cierra una asignación específica del empleado.
+
+        Útil para "remover un turno paralelo" sin tocar los demás
+        vigentes del mismo empleado.
+
+        Raises:
+            InvalidDateError: si ``fecha_fin`` no es ISO ``YYYY-MM-DD``.
+            ValueError: si la asignación no existe o ya está cerrada.
+        """
+        validate_fecha_iso(fecha_fin, "fecha_fin")
+        self._et_write.cerrar_asignacion_por_id(asignacion_id, fecha_fin)
+        self._audit.log(
+            action="turno_cerrado",
+            user_id=actor_user_id,
+            details=(f'{{"asignacion_id": {asignacion_id}, ' f'"fecha_fin": "{fecha_fin}"}}'),
+        )
+        self._log.info(
+            "Asignación cerrada: id=%s fecha_fin=%s",
+            asignacion_id,
+            fecha_fin,
+        )
+
     # ── Helpers privados ──────────────────────────────────────────────────
 
     @staticmethod

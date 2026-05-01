@@ -53,10 +53,7 @@ from core.services.errors import (
     TurnoNotFoundError,
     TurnoYaAsignadoError,
 )
-from ui.components.asignar_turno_dialog import (
-    AsignarTurnoDialog,
-    AsignarTurnoPayload,
-)
+from ui.components.asignar_turno_dialog import AsignarTurnoPayload
 from ui.components.dar_de_baja_dialog import (
     DarDeBajaDialog,
     DarDeBajaPayload,
@@ -66,6 +63,7 @@ from ui.components.empleado_form_dialog import (
     EmpleadoFormDialog,
     EmpleadoFormPayload,
 )
+from ui.components.gestion_turnos_dialog import GestionTurnosDialog
 from ui.controllers.empleados_controller import EmpleadosController
 
 _FILTRO_DEPTO_TODOS = "Todos los departamentos"
@@ -431,46 +429,28 @@ class EmpleadosView(ctk.CTkFrame):
         self._refrescar()
 
     def _on_asignar_o_cambiar_turno(self, emp: Empleado) -> None:
-        """Decide entre ``asignar_turno`` y ``cambiar_turno`` según el estado."""
+        """Sub-3.3: abre la pantalla de gestión de múltiples turnos.
+
+        Reemplaza al flujo legacy "Asignar/Cambiar turno único" por el
+        de "Gestionar turnos paralelos" — el empleado puede tener varias
+        asignaciones vigentes para distintos días de la semana.
+        """
         assert emp.id is not None
-        emp_id = emp.id
-        try:
-            vigente = self._controller.get_turno_vigente(emp_id)
-            turnos_options: List[ComboOption] = [
-                (t.id, t.nombre)
-                for t in self._controller.list_turnos(solo_activos=True)
-                if t.id is not None
-            ]
-        except Exception:  # noqa: BLE001
-            self._log.exception("Error cargando datos para asignar turno (emp=%s)", emp_id)
-            messagebox.showerror("Error", "No se pudo cargar la información de turnos.")
-            return
 
-        if not turnos_options:
-            messagebox.showwarning(
-                "Sin turnos activos",
-                "No hay turnos activos disponibles. Configure al menos uno antes " "de asignar.",
-            )
-            return
+        def asignar(emp_id: int, turno_id: int, fecha_inicio: str) -> None:
+            self._controller.asignar_turno(emp_id, turno_id, fecha_inicio)
 
-        modo_cambiar = vigente is not None
-        descripcion_actual: Optional[str] = None
-        if vigente is not None:
-            nombre_turno_actual = self._resolver_nombre_turno(vigente.turno_id, turnos_options)
-            descripcion_actual = f"{nombre_turno_actual} (desde {vigente.fecha_inicio})"
+        def cerrar(asignacion_id: int, fecha_fin: str) -> None:
+            self._controller.cerrar_asignacion(asignacion_id, fecha_fin)
 
-        def submit(payload: AsignarTurnoPayload) -> Optional[str]:
-            if modo_cambiar:
-                return self._handle_cambiar_turno(emp_id, payload)
-            return self._handle_asignar_turno(emp_id, payload)
-
-        dialog = AsignarTurnoDialog(
+        dialog = GestionTurnosDialog(
             self,
-            on_submit=submit,
-            empleado_descripcion=self._empleado_titulo(emp),
-            turnos=turnos_options,
-            modo_cambiar=modo_cambiar,
-            turno_actual_descripcion=descripcion_actual,
+            empleado=emp,
+            list_vigentes_fn=self._controller.list_turnos_vigentes,
+            list_turnos_fn=self._controller.list_turnos,
+            asignar_fn=asignar,
+            cerrar_fn=cerrar,
+            on_done=self._refrescar,
         )
         self.wait_window(dialog)
         self._refrescar()

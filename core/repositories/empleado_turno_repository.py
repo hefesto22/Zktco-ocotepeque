@@ -105,6 +105,22 @@ class IEmpleadoTurnoWriteRepository(ABC):
         """
 
     @abstractmethod
+    def cerrar_asignacion_por_id(self, asignacion_id: int, fecha_fin: str) -> None:
+        """Sub-3.3: cierra una asignación específica por su id.
+
+        Pensado para el flujo "el empleado tiene varios turnos vigentes
+        en paralelo y quiero cerrar UNO sin tocar los demás".
+
+        Args:
+            asignacion_id: PK de la fila en ``empleado_turnos``.
+            fecha_fin: ISO ``YYYY-MM-DD``. Último día efectivo.
+
+        Raises:
+            ValueError: Si el id no existe o la asignación ya está cerrada.
+            sqlite3.IntegrityError: Si el CHECK ``fecha_fin >= fecha_inicio`` falla.
+        """
+
+    @abstractmethod
     def cerrar_vigente(self, empleado_id: int, fecha_fin: str) -> None:
         """Cierra la asignación vigente del empleado sin abrir una nueva.
 
