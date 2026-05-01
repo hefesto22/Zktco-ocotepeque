@@ -26,7 +26,7 @@ Diseño (SOLID):
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from core.models.cargo import Cargo
 from core.models.departamento import Departamento
@@ -198,6 +198,21 @@ class CatalogoService:
             return self._cargo_read.list_active()
         return self._cargo_read.list_all()
 
+    def list_cargos_para_departamento(self, departamento_id: int) -> List[Cargo]:
+        """Sub-3.2.A: cargos disponibles para un departamento específico.
+
+        Combina cargos globales + cargos asignados a ese departamento.
+        Útil para poblar el dropdown de cargo en el formulario de
+        empleados según el departamento elegido.
+
+        Raises:
+            CatalogoNotFoundError: ``departamento_id`` no existe.
+        """
+        # Validamos que el departamento exista para evitar dropdowns
+        # silenciosamente vacíos por bugs del caller.
+        self.get_departamento(departamento_id)
+        return self._cargo_read.list_active_para_departamento(departamento_id)
+
     def get_cargo(self, cargo_id: int) -> Cargo:
         """Devuelve un cargo por id.
 
@@ -209,25 +224,84 @@ class CatalogoService:
             raise CatalogoNotFoundError(_CAT_CARGO, cargo_id)
         return cargo
 
-    def create_cargo(self, nombre: str, actor_user_id: int) -> Cargo:
+    def create_cargo(
+        self,
+        nombre: str,
+        actor_user_id: int,
+        departamento_id: Optional[int] = None,
+    ) -> Cargo:
         """Crea un cargo nuevo.
+
+        Args:
+            nombre: Texto único después de normalizar.
+            actor_user_id: Usuario que ejecuta (audit_log).
+            departamento_id: Si se pasa, el cargo queda restringido a
+                ese departamento (debe existir y estar activo). Si es
+                ``None`` el cargo es global.
 
         Raises:
             MissingRequiredFieldError: ``nombre`` vacío tras normalizar.
             DuplicateNombreError: Ya existe un cargo con ese nombre.
+            CatalogoNotFoundError: ``departamento_id`` no existe.
         """
         nombre_norm = normalize_nombre(nombre, "nombre")
         if self._cargo_read.get_by_nombre(nombre_norm) is not None:
             raise DuplicateNombreError(_CAT_CARGO, nombre_norm)
-        creado = self._cargo_write.create(Cargo(id=None, nombre=nombre_norm))
+        if departamento_id is not None:
+            # Reusa la validación de existencia (lanza CatalogoNotFoundError).
+            self.get_departamento(departamento_id)
+        creado = self._cargo_write.create(
+            Cargo(id=None, nombre=nombre_norm, departamento_id=departamento_id)
+        )
         assert creado.id is not None
         self._audit.log(
             action="cargo_created",
             user_id=actor_user_id,
-            details=f'{{"id": {creado.id}, "nombre": "{nombre_norm}"}}',
+            details=(
+                f'{{"id": {creado.id}, "nombre": "{nombre_norm}", '
+                f'"departamento_id": {departamento_id if departamento_id is not None else "null"}}}'
+            ),
         )
-        self._log.info("Cargo creado: id=%s nombre=%s", creado.id, nombre_norm)
+        self._log.info(
+            "Cargo creado: id=%s nombre=%s depto=%s",
+            creado.id,
+            nombre_norm,
+            departamento_id,
+        )
         return creado
+
+    def set_cargo_departamento(
+        self,
+        cargo_id: int,
+        departamento_id: Optional[int],
+        actor_user_id: int,
+    ) -> None:
+        """Sub-3.2.A: cambia (o desasigna con ``None``) el departamento de un cargo.
+
+        Raises:
+            CatalogoNotFoundError: ``cargo_id`` o ``departamento_id`` no existen.
+        """
+        cargo = self.get_cargo(cargo_id)
+        if departamento_id is not None:
+            self.get_departamento(departamento_id)
+        if cargo.departamento_id == departamento_id:
+            return
+        self._cargo_write.update_departamento(cargo_id, departamento_id)
+        self._audit.log(
+            action="cargo_depto_changed",
+            user_id=actor_user_id,
+            details=(
+                f'{{"id": {cargo_id}, '
+                f'"old": {cargo.departamento_id if cargo.departamento_id is not None else "null"}, '
+                f'"new": {departamento_id if departamento_id is not None else "null"}}}'
+            ),
+        )
+        self._log.info(
+            "Cargo depto actualizado: id=%s %s -> %s",
+            cargo_id,
+            cargo.departamento_id,
+            departamento_id,
+        )
 
     def rename_cargo(
         self,

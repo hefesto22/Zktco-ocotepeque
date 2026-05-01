@@ -19,16 +19,19 @@ def _row_to_cargo(row: sqlite3.Row) -> Cargo:
         id=row["id"],
         nombre=row["nombre"],
         is_active=bool(row["is_active"]),
+        departamento_id=row["departamento_id"],
     )
 
 
 class CargoRepositorySQLite(ICargoReadRepository, ICargoWriteRepository):
     """Implementación SQLite — Opción A: una conexión por operación.
 
-    Gemelo simétrico de ``DepartamentoRepositorySQLite``.
+    Sub-3.2.A: el campo ``departamento_id`` es nullable. ``None`` =
+    cargo global (aparece en cualquier departamento del formulario de
+    empleados); un valor restringe el cargo a ese departamento.
     """
 
-    _SELECT_COLS = "id, nombre, is_active"
+    _SELECT_COLS = "id, nombre, is_active, departamento_id"
 
     def __init__(self, database: Database) -> None:
         """Inicializa el repo con el adaptador de BD inyectado."""
@@ -66,19 +69,32 @@ class CargoRepositorySQLite(ICargoReadRepository, ICargoWriteRepository):
             ).fetchall()
         return [_row_to_cargo(r) for r in rows]
 
+    def list_active_para_departamento(self, departamento_id: int) -> List[Cargo]:
+        """Sub-3.2.A: cargos globales + específicos del departamento."""
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {self._SELECT_COLS} FROM cargos "
+                "WHERE is_active = 1 "
+                "  AND (departamento_id IS NULL OR departamento_id = ?) "
+                "ORDER BY nombre ASC",
+                (departamento_id,),
+            ).fetchall()
+        return [_row_to_cargo(r) for r in rows]
+
     # ── Write ─────────────────────────────────────────────────────────────
 
     def create(self, cargo: Cargo) -> Cargo:
         with self._db.transaction() as conn:
             cursor = conn.execute(
-                "INSERT INTO cargos (nombre, is_active) VALUES (?, ?)",
-                (cargo.nombre, 1 if cargo.is_active else 0),
+                "INSERT INTO cargos (nombre, is_active, departamento_id) " "VALUES (?, ?, ?)",
+                (cargo.nombre, 1 if cargo.is_active else 0, cargo.departamento_id),
             )
             new_id = cursor.lastrowid
         return Cargo(
             id=new_id,
             nombre=cargo.nombre,
             is_active=cargo.is_active,
+            departamento_id=cargo.departamento_id,
         )
 
     def rename(self, cargo_id: int, nuevo_nombre: str) -> None:
@@ -86,6 +102,13 @@ class CargoRepositorySQLite(ICargoReadRepository, ICargoWriteRepository):
             conn.execute(
                 "UPDATE cargos SET nombre = ? WHERE id = ?",
                 (nuevo_nombre, cargo_id),
+            )
+
+    def update_departamento(self, cargo_id: int, departamento_id: Optional[int]) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE cargos SET departamento_id = ? WHERE id = ?",
+                (departamento_id, cargo_id),
             )
 
     def archive(self, cargo_id: int) -> None:

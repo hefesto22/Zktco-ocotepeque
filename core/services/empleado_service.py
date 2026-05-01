@@ -65,9 +65,9 @@ from core.services.errors import (
     InvalidMotivoBajaError,
     MissingRequiredFieldError,
     SinTurnoVigenteError,
+    TurnoBitmaskSolapadoError,
     TurnoInactiveError,
     TurnoNotFoundError,
-    TurnoYaAsignadoError,
 )
 from core.services.validators import validate_dni, validate_fecha_iso
 
@@ -333,12 +333,21 @@ class EmpleadoService:
         fecha_inicio: str,
         actor_user_id: int,
     ) -> EmpleadoTurno:
-        """Asigna un turno a un empleado que no tiene vigente.
+        """Asigna un turno a un empleado.
+
+        Sub-3.2.B: si el empleado ya tiene asignaciones vigentes, esta
+        función las acepta SI los días de la semana del turno nuevo no
+        se solapan con ninguna vigente. Esto permite modelar casos
+        como "lun-vie 8-17 + sábado 8-13" como dos asignaciones
+        paralelas.
+
+        Si el bitmask del nuevo se solapa con cualquiera de las
+        vigentes, se rechaza con ``TurnoBitmaskSolapadoError``.
 
         Raises:
             EmpleadoNotFoundError, EmpleadoAlreadyInactiveError,
             TurnoNotFoundError, TurnoInactiveError,
-            TurnoYaAsignadoError, InvalidDateError.
+            TurnoBitmaskSolapadoError, InvalidDateError.
         """
         empleado = self.get_empleado(empleado_id)
         if not empleado.is_active:
@@ -346,8 +355,7 @@ class EmpleadoService:
         self._validar_turno_activo(turno_id)
         validate_fecha_iso(fecha_inicio, "fecha_inicio")
 
-        if self._et_read.get_vigente(empleado_id) is not None:
-            raise TurnoYaAsignadoError(empleado_id)
+        self._validar_bitmask_no_solapado(empleado_id, turno_id)
 
         asignacion = self._et_write.asignar(empleado_id, turno_id, fecha_inicio)
         self._audit.log(
@@ -446,13 +454,24 @@ class EmpleadoService:
         return valor.strip()
 
     def _validar_catalogos_activos(self, departamento_id: int, cargo_id: int) -> None:
-        """Valida que depto y cargo existan Y estén activos."""
+        """Valida que depto y cargo existan, estén activos y sean compatibles.
+
+        Sub-3.2.A: si el cargo tiene ``departamento_id`` distinto del
+        departamento elegido, se rechaza — un cargo específico de
+        Tesorería no puede asignarse a un empleado de Obras Públicas.
+        Los cargos globales (``departamento_id IS NULL``) son válidos
+        para cualquier departamento.
+        """
         dep = self._dep_read.get_by_id(departamento_id)
         if dep is None or not dep.is_active:
             raise CatalogoNotFoundError("departamento activo", departamento_id)
         cargo = self._cargo_read.get_by_id(cargo_id)
         if cargo is None or not cargo.is_active:
             raise CatalogoNotFoundError("cargo activo", cargo_id)
+        if cargo.departamento_id is not None and cargo.departamento_id != departamento_id:
+            raise CatalogoNotFoundError(
+                f"cargo válido para departamento {departamento_id}", cargo_id
+            )
 
     def _validar_turno_activo(self, turno_id: int) -> None:
         """Valida que el turno exista y esté activo."""
@@ -461,6 +480,23 @@ class EmpleadoService:
             raise TurnoNotFoundError(turno_id)
         if not turno.is_active:
             raise TurnoInactiveError(turno_id)
+
+    def _validar_bitmask_no_solapado(self, empleado_id: int, turno_id_nuevo: int) -> None:
+        """Sub-3.2.B: ningún día del nuevo turno puede coincidir con un vigente.
+
+        Itera las asignaciones vigentes del empleado, lee el ``dias_semana``
+        de cada turno y rechaza si la intersección con el nuevo es no vacía.
+        """
+        turno_nuevo = self._turno_read.get_by_id(turno_id_nuevo)
+        # _validar_turno_activo ya garantizó que existe.
+        assert turno_nuevo is not None
+        bitmask_nuevo = turno_nuevo.dias_semana
+        for vigente in self._et_read.list_vigentes(empleado_id):
+            turno_vigente = self._turno_read.get_by_id(vigente.turno_id)
+            if turno_vigente is None:
+                continue
+            if turno_vigente.dias_semana & bitmask_nuevo:
+                raise TurnoBitmaskSolapadoError(empleado_id, vigente.turno_id)
 
     def _validar_dni_unico(self, dni: str, excepto_id: Optional[int]) -> None:
         """Valida que el DNI no esté tomado por OTRO empleado."""

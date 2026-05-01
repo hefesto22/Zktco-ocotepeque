@@ -28,11 +28,28 @@ class IEmpleadoTurnoReadRepository(ABC):
 
     @abstractmethod
     def get_vigente(self, empleado_id: int) -> Optional[EmpleadoTurno]:
-        """Devuelve la asignación vigente (``fecha_fin IS NULL``) del empleado.
+        """Devuelve UNA asignación vigente del empleado (compat).
+
+        Sub-3.2.B: ahora un empleado puede tener varias asignaciones
+        vigentes (lun-vie + sáb). Esta función devuelve la primera que
+        encuentre y se mantiene solo para flujos legacy de "un turno
+        único" (``cambiar_turno``). Los flujos nuevos deben usar
+        ``list_vigentes``.
 
         Returns:
-            La fila vigente, o ``None`` si el empleado nunca tuvo turno o
-            su última asignación ya está cerrada.
+            Una fila vigente, o ``None`` si el empleado no tiene
+            ninguna asignación abierta. Si hay varias vigentes, el
+            criterio de cuál devolver es indeterminado por contrato.
+        """
+
+    @abstractmethod
+    def list_vigentes(self, empleado_id: int) -> List[EmpleadoTurno]:
+        """Devuelve TODAS las asignaciones vigentes del empleado.
+
+        Sub-3.2.B: con la migración 008, un empleado puede tener
+        varias asignaciones abiertas que cubren días distintos de la
+        semana. Este método las devuelve todas, ordenadas por
+        ``fecha_inicio`` ascendente.
         """
 
     @abstractmethod

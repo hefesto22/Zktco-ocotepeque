@@ -122,33 +122,44 @@ class MarcadasDelDia:
 def resolver_turno_en_fecha(
     historial: List[EmpleadoTurno],
     fecha_iso: str,
+    turnos_por_id: Optional[dict[int, Turno]] = None,
 ) -> Optional[int]:
-    """Devuelve el ``turno_id`` vigente para el empleado en la fecha dada.
+    """Devuelve el ``turno_id`` aplicable al empleado en la fecha dada.
 
-    Recorre el historial de asignaciones (``empleado_turnos``) buscando
-    una fila cuyo rango ``[fecha_inicio, fecha_fin]`` contenga ``fecha_iso``.
-    Las asignaciones vigentes (``fecha_fin IS NULL``) se tratan como si
-    su fin fuera infinito.
+    Sub-3.2.B: cuando se pasa ``turnos_por_id``, además de chequear que
+    la asignación esté vigente en la fecha, se valida que el bitmask
+    ``dias_semana`` del turno incluya el día de la semana de ``fecha``.
+    Esto permite que un empleado tenga varias asignaciones vigentes
+    paralelas (ej. un turno para lun-vie y otro para sáb), y que la
+    consolidación elija la correcta para cada día.
+
+    Cuando ``turnos_por_id`` es ``None``, se mantiene el comportamiento
+    legacy (devuelve la primera asignación que cubra la fecha) — útil
+    para flujos que aún no tengan el catálogo de turnos a mano.
 
     Args:
         historial: Todas las filas de ``empleado_turnos`` del empleado
-            (cualquier orden; la función lo itera completo). Vacío o
-            ``None`` no aplica — pasar lista vacía si el empleado no tiene
-            historial.
+            (cualquier orden). Vacío significa "sin asignaciones".
         fecha_iso: Fecha a consultar en formato ``"YYYY-MM-DD"``.
+        turnos_por_id: Catálogo de turnos. Si se pasa, se filtra por
+            ``dia_aplica(turno.dias_semana, weekday)``.
 
     Returns:
-        El ``turno_id`` de la asignación que cubre esa fecha, o ``None``
-        si el empleado no tenía turno asignado ese día (día previo a su
-        primera asignación, o en un hueco entre asignaciones cerradas).
+        El ``turno_id`` aplicable, o ``None`` si ninguna asignación
+        cubre esa fecha y ese día de la semana.
 
     Raises:
         ValueError: Si ``fecha_iso`` no es parseable.
     """
     fecha_consulta = _parse_fecha(fecha_iso, campo="fecha_iso")
+    weekday = fecha_consulta.weekday()
     for asignacion in historial:
         if not _asignacion_cubre_fecha(asignacion, fecha_consulta):
             continue
+        if turnos_por_id is not None:
+            turno = turnos_por_id.get(asignacion.turno_id)
+            if turno is None or not dia_aplica(turno.dias_semana, weekday):
+                continue
         return asignacion.turno_id
     return None
 

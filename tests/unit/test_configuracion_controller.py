@@ -16,7 +16,7 @@ Sub-2.5/2.6/3.4a.
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import pytest
 
@@ -28,7 +28,6 @@ from core.services.errors import PermissionDeniedError
 from core.services.permission_service import PermissionService
 from core.services.session import Session
 from ui.controllers.configuracion_controller import ConfiguracionController
-
 
 # ── Stubs ─────────────────────────────────────────────────────────────────────
 
@@ -76,9 +75,18 @@ class _StubCatalogoService:
         self._record("list_cargos", solo_activos=solo_activos)
         return [Cargo(id=1, nombre="Analista")]
 
-    def create_cargo(self, nombre: str, actor_user_id: int) -> Cargo:
-        self._record("create_cargo", nombre, actor_user_id)
-        cargo = Cargo(id=self._next_cargo_id, nombre=nombre)
+    def create_cargo(
+        self,
+        nombre: str,
+        actor_user_id: int,
+        departamento_id: Optional[int] = None,
+    ) -> Cargo:
+        self._record("create_cargo", nombre, actor_user_id, departamento_id)
+        cargo = Cargo(
+            id=self._next_cargo_id,
+            nombre=nombre,
+            departamento_id=departamento_id,
+        )
         self._next_cargo_id += 1
         return cargo
 
@@ -90,6 +98,18 @@ class _StubCatalogoService:
 
     def unarchive_cargo(self, cargo_id: int, actor_user_id: int) -> None:
         self._record("unarchive_cargo", cargo_id, actor_user_id)
+
+    def set_cargo_departamento(
+        self,
+        cargo_id: int,
+        departamento_id: Optional[int],
+        actor_user_id: int,
+    ) -> None:
+        self._record("set_cargo_departamento", cargo_id, departamento_id, actor_user_id)
+
+    def list_cargos_para_departamento(self, departamento_id: int) -> List[Cargo]:
+        self._record("list_cargos_para_departamento", departamento_id)
+        return [Cargo(id=11, nombre="Tesorero", departamento_id=departamento_id)]
 
 
 class _StubDispositivoConfigService:
@@ -215,7 +235,31 @@ def test_unarchive_departamento_delega() -> None:
 def test_create_cargo_delega() -> None:
     ctrl, stub, _stub_disp = _controller({perms.MANAGE_SETTINGS}, user_id=11)
     ctrl.create_cargo("Contador")
-    assert stub.calls == [("create_cargo", ("Contador", 11), {})]
+    # Sub-3.2.A: el controller pasa también departamento_id (None por default).
+    assert stub.calls == [("create_cargo", ("Contador", 11, None), {})]
+
+
+def test_create_cargo_con_departamento_delega() -> None:
+    """Sub-3.2.A: ``departamento_id`` se propaga al servicio."""
+    ctrl, stub, _stub_disp = _controller({perms.MANAGE_SETTINGS}, user_id=11)
+    ctrl.create_cargo("Tesorero", departamento_id=5)
+    assert stub.calls == [("create_cargo", ("Tesorero", 11, 5), {})]
+
+
+def test_set_cargo_departamento_delega() -> None:
+    """Sub-3.2.A: cambiar el depto de un cargo audita en el service."""
+    ctrl, stub, _stub_disp = _controller({perms.MANAGE_SETTINGS}, user_id=11)
+    ctrl.set_cargo_departamento(7, 5)
+    assert stub.calls == [("set_cargo_departamento", (7, 5, 11), {})]
+
+
+def test_list_cargos_para_departamento_delega() -> None:
+    """Sub-3.2.A: el listado filtrado pasa al service."""
+    ctrl, stub, _stub_disp = _controller({perms.MANAGE_SETTINGS}, user_id=11)
+    cargos = ctrl.list_cargos_para_departamento(5)
+    assert stub.calls == [("list_cargos_para_departamento", (5,), {})]
+    assert len(cargos) == 1
+    assert cargos[0].nombre == "Tesorero"
 
 
 def test_archive_cargo_delega() -> None:

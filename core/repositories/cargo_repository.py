@@ -42,6 +42,17 @@ class ICargoReadRepository(ABC):
         Ordenados por ``nombre`` ascendente.
         """
 
+    @abstractmethod
+    def list_active_para_departamento(self, departamento_id: int) -> List[Cargo]:
+        """Devuelve cargos disponibles para un departamento (Sub-3.2.A).
+
+        Incluye:
+            - Cargos globales (``departamento_id IS NULL``).
+            - Cargos específicos del departamento dado.
+
+        Excluye archivados. Ordenados por ``nombre`` ascendente.
+        """
+
 
 class ICargoWriteRepository(ABC):
     """Operaciones de escritura sobre la tabla ``cargos``."""
@@ -50,11 +61,14 @@ class ICargoWriteRepository(ABC):
     def create(self, cargo: Cargo) -> Cargo:
         """Inserta un cargo nuevo.
 
+        Persiste también ``cargo.departamento_id`` (puede ser ``None``).
+
         Returns:
             Nueva instancia con el ``id`` ya asignado.
 
         Raises:
-            sqlite3.IntegrityError: Si ``nombre`` ya existe (UNIQUE).
+            sqlite3.IntegrityError: Si ``nombre`` ya existe (UNIQUE) o
+                el ``departamento_id`` no apunta a una fila válida.
         """
 
     @abstractmethod
@@ -63,6 +77,13 @@ class ICargoWriteRepository(ABC):
 
         Raises:
             sqlite3.IntegrityError: Si ``nuevo_nombre`` colisiona con el UNIQUE.
+        """
+
+    @abstractmethod
+    def update_departamento(self, cargo_id: int, departamento_id: Optional[int]) -> None:
+        """Cambia (o desasigna con ``None``) el departamento del cargo.
+
+        ``None`` lo vuelve a "global" (aplica a cualquier departamento).
         """
 
     @abstractmethod

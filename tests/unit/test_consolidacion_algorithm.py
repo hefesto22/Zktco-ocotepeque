@@ -143,6 +143,39 @@ def test_resolver_turno_fecha_invalida_lanza_value_error() -> None:
         resolver_turno_en_fecha([], "no-fecha")
 
 
+def test_resolver_turno_filtra_por_dia_cuando_hay_multiples_vigentes() -> None:
+    """Sub-3.2.B: con dos asignaciones vigentes (una L-V y otra Sáb), la
+    función devuelve el turno cuyo bitmask incluye el día de ``fecha``.
+
+    Lunes (weekday=0) → turno_id 10 (L-V).
+    Sábado (weekday=5) → turno_id 20 (Sáb).
+    """
+    from core.models.turno import DIAS_LABORALES, SABADO
+
+    historial = [
+        _asignacion(1, turno_id=10, fecha_inicio="2026-01-01"),
+        _asignacion(2, turno_id=20, fecha_inicio="2026-01-02"),
+    ]
+    turnos_por_id = {
+        10: _turno(id_=10, dias=DIAS_LABORALES),
+        20: _turno(id_=20, dias=SABADO),
+    }
+    # 2026-04-13 es lunes (weekday 0)
+    assert resolver_turno_en_fecha(historial, "2026-04-13", turnos_por_id) == 10
+    # 2026-04-18 es sábado (weekday 5)
+    assert resolver_turno_en_fecha(historial, "2026-04-18", turnos_por_id) == 20
+    # 2026-04-19 es domingo: ninguno aplica
+    assert resolver_turno_en_fecha(historial, "2026-04-19", turnos_por_id) is None
+
+
+def test_resolver_turno_legacy_sin_turnos_por_id_devuelve_la_primera_match() -> None:
+    """Comportamiento previo a Sub-3.2.B: sin catálogo, no se filtra por día."""
+    historial = [_asignacion(1, turno_id=10, fecha_inicio="2026-01-01")]
+    # Cualquier fecha cubierta por la asignación devuelve el turno_id sin
+    # mirar dias_semana.
+    assert resolver_turno_en_fecha(historial, "2026-04-13") == 10
+
+
 # ── ventana_del_dia ──────────────────────────────────────────────────────────
 
 

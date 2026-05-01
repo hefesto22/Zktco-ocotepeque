@@ -88,6 +88,12 @@ Antes de dar de alta empleados necesitás crear al menos un departamento (ej. "T
 
 Un departamento o cargo con empleados activos asignados **no se puede archivar** hasta reasignar o archivar a esos empleados.
 
+**Cargos globales vs específicos de un departamento (Sub-3.2.A):**
+
+Cuando creás un cargo, podés dejarlo **global** (aplica a cualquier departamento, ej. "Auxiliar") o **restringirlo a un departamento** (ej. "Tesorero" solo en "Tesorería"). En el formulario de empleado, al elegir el departamento, el dropdown de cargo se refresca y muestra solo los cargos elegibles: los globales más los específicos de ese departamento. Esto evita errores como asignar "Tesorero" a alguien de "Obras Públicas".
+
+Si un cargo ya tiene empleados activos asignados a un departamento, no se puede mover a otro departamento incompatible — primero hay que reasignar o archivar a esos empleados.
+
 ---
 
 ## 6. Turnos y asignación
@@ -104,7 +110,19 @@ Cada turno define:
 
 Si la hora de salida es menor o igual que la de entrada, el turno se considera **nocturno** (cruza medianoche).
 
-**Asignar turno a un empleado:** desde el detalle del empleado → **Asignar turno** → seleccionar turno y fecha de inicio. Cada empleado tiene un único turno vigente a la vez. Para cambiar de turno, primero hay que cerrar el actual y asignar uno nuevo.
+**Asignar turno a un empleado:** desde el detalle del empleado → **Asignar turno** → seleccionar turno y fecha de inicio. Para cambiar de turno, usar **Cambiar turno** (cierra el actual y abre el nuevo en una operación atómica).
+
+**Turnos múltiples por empleado (Sub-3.2.B — backend):**
+
+A nivel de la base de datos, un empleado puede tener varias asignaciones de turno vigentes en paralelo, siempre que los días de la semana de cada bitmask **no se solapen**. Caso típico: el mismo empleado trabaja lun-vie 8-17 (turno A) y sábados 8-13 (turno B). Para usarlo:
+
+1. Crear los dos turnos por separado, cada uno con su propio bitmask de días (turno A: lun-vie; turno B: sábado).
+2. Asignar primero el turno A al empleado.
+3. Asignar el turno B al mismo empleado (con fecha de inicio distinta para no chocar con el UNIQUE de empleado/fecha).
+
+La consolidación de asistencia identifica automáticamente cuál de las asignaciones vigentes aplica a cada día según el bitmask del turno. Si los días se solapan (ej. dos turnos para el lunes), el sistema rechaza la segunda asignación con un mensaje explícito.
+
+> Nota: la UI actual permite asignar un turno a la vez. Para múltiples vigentes en el corto plazo, usar el script de utilidad o esperar Sub-3.3 que expondrá el flujo completo desde la pantalla del empleado.
 
 ---
 

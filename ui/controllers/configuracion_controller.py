@@ -14,7 +14,7 @@ devuelven modelos de dominio o None; la vista decide cómo renderizarlos.
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from core.models import permissions as perms
 from core.models.cargo import Cargo
@@ -90,14 +90,34 @@ class ConfiguracionController:
         return self._catalogo.list_cargos(solo_activos=solo_activos)
 
     @require_permission(perms.MANAGE_SETTINGS)
-    def create_cargo(self, nombre: str) -> Cargo:
-        """Crea un cargo nuevo y lo devuelve con su id asignado."""
-        return self._catalogo.create_cargo(nombre, self.session.user_id)
+    def create_cargo(
+        self,
+        nombre: str,
+        departamento_id: Optional[int] = None,
+    ) -> Cargo:
+        """Crea un cargo nuevo y lo devuelve con su id asignado.
+
+        Sub-3.2.A: ``departamento_id`` opcional restringe el cargo a un
+        departamento concreto. Sin él (o con ``None``), el cargo es global.
+        """
+        return self._catalogo.create_cargo(
+            nombre, self.session.user_id, departamento_id=departamento_id
+        )
 
     @require_permission(perms.MANAGE_SETTINGS)
     def rename_cargo(self, cargo_id: int, nuevo_nombre: str) -> None:
         """Renombra un cargo existente."""
         self._catalogo.rename_cargo(cargo_id, nuevo_nombre, self.session.user_id)
+
+    @require_permission(perms.MANAGE_SETTINGS)
+    def set_cargo_departamento(self, cargo_id: int, departamento_id: Optional[int]) -> None:
+        """Sub-3.2.A: cambia (o desasigna con ``None``) el departamento del cargo."""
+        self._catalogo.set_cargo_departamento(cargo_id, departamento_id, self.session.user_id)
+
+    @require_permission(perms.MANAGE_SETTINGS)
+    def list_cargos_para_departamento(self, departamento_id: int) -> List[Cargo]:
+        """Sub-3.2.A: cargos disponibles para un depto (globales + específicos)."""
+        return self._catalogo.list_cargos_para_departamento(departamento_id)
 
     @require_permission(perms.MANAGE_SETTINGS)
     def archive_cargo(self, cargo_id: int) -> None:

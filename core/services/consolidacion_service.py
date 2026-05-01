@@ -346,7 +346,9 @@ class ConsolidacionService:
         solo construye la instancia.
         """
         assert empleado.id is not None
-        turno_id = resolver_turno_en_fecha(historial, fecha_iso)
+        # Sub-3.2.B: se pasa el catálogo para filtrar por bitmask
+        # ``dias_semana`` cuando hay múltiples asignaciones vigentes.
+        turno_id = resolver_turno_en_fecha(historial, fecha_iso, turnos_por_id)
         turno: Optional[Turno] = turnos_por_id.get(turno_id) if turno_id is not None else None
         es_feriado = fecha_iso in feriados_set
 

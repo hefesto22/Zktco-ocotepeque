@@ -102,14 +102,23 @@ def test_asignar_crea_fila_vigente(
     assert asignacion.fecha_fin is None
 
 
-def test_asignar_duplicado_vigente_falla_por_indice_parcial(
+def test_asignar_dos_vigentes_es_legal_a_nivel_repo(
     setup: Tuple[EmpleadoTurnoRepositorySQLite, int, int, int],
 ) -> None:
-    """El índice parcial único impide que un empleado tenga 2 vigentes."""
+    """Sub-3.2.B: la migración 008 quitó el índice único parcial.
+
+    A nivel BD ahora se permite tener varias asignaciones vigentes
+    para un mismo empleado (cubriendo días distintos de la semana).
+    La invariante "los días no se solapan" la valida el
+    ``EmpleadoService``, no la BD, porque depende del bitmask del
+    Turno (otra tabla).
+    """
     repo, emp_id, turno_a, turno_b = setup
     repo.asignar(emp_id, turno_a, "2026-01-01")
-    with pytest.raises(sqlite3.IntegrityError):
-        repo.asignar(emp_id, turno_b, "2026-02-01")
+    # Ya no falla — el repo permite la segunda vigente.
+    repo.asignar(emp_id, turno_b, "2026-02-01")
+    vigentes = repo.list_vigentes(emp_id)
+    assert {v.turno_id for v in vigentes} == {turno_a, turno_b}
 
 
 def test_asignar_con_empleado_inexistente_falla(

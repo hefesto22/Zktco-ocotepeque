@@ -44,13 +44,26 @@ class EmpleadoTurnoRepositorySQLite(IEmpleadoTurnoReadRepository, IEmpleadoTurno
     # ── Read ──────────────────────────────────────────────────────────────
 
     def get_vigente(self, empleado_id: int) -> Optional[EmpleadoTurno]:
+        # Sub-3.2.B: ahora puede haber varias vigentes (días disjuntos).
+        # Devolvemos la primera por fecha_inicio ASC (estable y predecible).
         with self._db.transaction() as conn:
             row: Optional[sqlite3.Row] = conn.execute(
                 f"SELECT {self._SELECT_COLS} FROM empleado_turnos "
-                "WHERE empleado_id = ? AND fecha_fin IS NULL",
+                "WHERE empleado_id = ? AND fecha_fin IS NULL "
+                "ORDER BY fecha_inicio ASC, id ASC LIMIT 1",
                 (empleado_id,),
             ).fetchone()
         return _row_to_empleado_turno(row) if row is not None else None
+
+    def list_vigentes(self, empleado_id: int) -> List[EmpleadoTurno]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {self._SELECT_COLS} FROM empleado_turnos "
+                "WHERE empleado_id = ? AND fecha_fin IS NULL "
+                "ORDER BY fecha_inicio ASC, id ASC",
+                (empleado_id,),
+            ).fetchall()
+        return [_row_to_empleado_turno(r) for r in rows]
 
     def list_historial(self, empleado_id: int) -> List[EmpleadoTurno]:
         with self._db.transaction() as conn:

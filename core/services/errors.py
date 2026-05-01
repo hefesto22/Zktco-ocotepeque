@@ -350,6 +350,27 @@ class TurnoYaAsignadoError(EmpleadoError):
         self.empleado_id = empleado_id
 
 
+class TurnoBitmaskSolapadoError(EmpleadoError):
+    """Sub-3.2.B: el bitmask del turno nuevo se solapa con un vigente.
+
+    Ocurre cuando el empleado intenta sumar un segundo turno paralelo
+    (ej. uno para sábado) pero los días que cubre se solapan con un
+    turno ya vigente. La regla es: el conjunto de días cubiertos por
+    todas las asignaciones vigentes debe ser disjunto (cada día de la
+    semana lo cubre a lo sumo un turno).
+    """
+
+    def __init__(self, empleado_id: int, turno_id_existente: int) -> None:
+        super().__init__(
+            f"El empleado {empleado_id} ya tiene una asignación vigente "
+            f"(turno_id={turno_id_existente}) cuyos días de la semana se "
+            "solapan con los del nuevo turno. Cerrá la vigente o usá un "
+            "turno con bitmask de días disjunto."
+        )
+        self.empleado_id = empleado_id
+        self.turno_id_existente = turno_id_existente
+
+
 # ── Errores de sincronización (Fase 3) ────────────────────────────────────────
 
 

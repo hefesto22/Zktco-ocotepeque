@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from tkinter import messagebox
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import customtkinter as ctk
 
@@ -67,7 +67,6 @@ from ui.components.empleado_form_dialog import (
     EmpleadoFormPayload,
 )
 from ui.controllers.empleados_controller import EmpleadosController
-
 
 _FILTRO_DEPTO_TODOS = "Todos los departamentos"
 
@@ -321,6 +320,20 @@ class EmpleadosView(ctk.CTkFrame):
 
     # ── Handlers: acciones sobre un empleado ──────────────────────────────
 
+    def _cargos_por_depto_provider(self, departamento_id: int) -> List[Tuple[int, str]]:
+        """Sub-3.2.A: provider que el diálogo usa para refrescar cargos.
+
+        Devuelve la lista de cargos elegibles para el departamento dado
+        (globales + específicos), en formato ``(id, nombre)`` que el
+        dropdown del formulario espera.
+        """
+        try:
+            cargos = self._controller.list_cargos_para_departamento(departamento_id)
+        except Exception:  # noqa: BLE001
+            self._log.exception("No se pudieron cargar cargos para depto=%s", departamento_id)
+            return []
+        return [(c.id, c.nombre) for c in cargos if c.id is not None]
+
     def _on_nuevo(self) -> None:
         """Abre el diálogo en modo alta y delega la creación al controller."""
         try:
@@ -367,6 +380,7 @@ class EmpleadosView(ctk.CTkFrame):
             cargos=cargos,
             turnos=turnos,
             modo_alta=True,
+            cargos_por_depto_provider=self._cargos_por_depto_provider,
         )
         self.wait_window(dialog)
         self._refrescar()
@@ -411,6 +425,7 @@ class EmpleadosView(ctk.CTkFrame):
             initial_telefono=emp.telefono or "",
             initial_email=emp.email or "",
             initial_zkteco_id=emp.zkteco_id,
+            cargos_por_depto_provider=self._cargos_por_depto_provider,
         )
         self.wait_window(dialog)
         self._refrescar()

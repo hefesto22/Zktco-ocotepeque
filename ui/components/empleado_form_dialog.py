@@ -111,6 +111,7 @@ class EmpleadoFormDialog(ctk.CTkToplevel):
         initial_telefono: str = "",
         initial_email: str = "",
         initial_zkteco_id: Optional[int] = None,
+        cargos_por_depto_provider: Optional[Callable[[int], List[ComboOption]]] = None,
     ) -> None:
         """Construye el diálogo.
 
@@ -158,6 +159,10 @@ class EmpleadoFormDialog(ctk.CTkToplevel):
         # OptionMenu, pero mantenemos la defensiva).
         self._dep_map: Dict[str, int] = {label: id_ for id_, label in departamentos}
         self._car_map: Dict[str, int] = {label: id_ for id_, label in cargos}
+        # Sub-3.2.A: provider opcional que devuelve los cargos elegibles
+        # para un departamento (globales + específicos). Cuando se pasa,
+        # el dropdown de cargo se recarga al cambiar el de departamento.
+        self._cargos_por_depto_provider = cargos_por_depto_provider
         self._tur_map: Dict[str, int] = (
             {label: id_ for id_, label in (turnos or [])} if modo_alta else {}
         )
@@ -246,6 +251,10 @@ class EmpleadoFormDialog(ctk.CTkToplevel):
             pad_x=pad_x,
             pad_y=pad_y,
         )
+        # Sub-3.2.A: cuando el operador cambia el dropdown de
+        # departamento, refrescamos el de cargos con la lista filtrada.
+        if self._cargos_por_depto_provider is not None:
+            self._combo_dep.configure(command=self._on_departamento_change)
         row += 1
 
         # Cargo (combo)
@@ -475,6 +484,41 @@ class EmpleadoFormDialog(ctk.CTkToplevel):
             self._log.debug("grab_set falló (ventana destruida)")
 
     # ── Handlers ──────────────────────────────────────────────────────────
+
+    def _on_departamento_change(self, _selected_label: str) -> None:
+        """Sub-3.2.A: refresca el dropdown de cargos al cambiar el de depto.
+
+        Pide al provider la lista de cargos elegibles (globales +
+        específicos del depto seleccionado) y reemplaza las opciones
+        del combo. Si el cargo previamente seleccionado sigue siendo
+        elegible, se preserva; si no, se posiciona en la primera opción.
+        """
+        if self._cargos_por_depto_provider is None:
+            return
+        dep_label = self._combo_dep.get()
+        dep_id = self._dep_map.get(dep_label)
+        if dep_id is None:
+            return
+        try:
+            nuevas_opciones = self._cargos_por_depto_provider(dep_id)
+        except Exception:  # noqa: BLE001
+            self._log.exception("No se pudieron recargar los cargos.")
+            return
+        if not nuevas_opciones:
+            # Sin cargos elegibles — dejamos el combo en blanco para que
+            # el operador note el problema y cree un cargo apropiado.
+            self._car_map = {}
+            self._combo_cargo.configure(values=[""])
+            self._combo_cargo.set("")
+            return
+        labels_nuevos = [lbl for _id, lbl in nuevas_opciones]
+        actual = self._combo_cargo.get()
+        self._car_map = {label: id_ for id_, label in nuevas_opciones}
+        self._combo_cargo.configure(values=labels_nuevos)
+        if actual in labels_nuevos:
+            self._combo_cargo.set(actual)
+        else:
+            self._combo_cargo.set(labels_nuevos[0])
 
     def _on_cancel(self) -> None:
         """Cierra el diálogo sin invocar el callback."""

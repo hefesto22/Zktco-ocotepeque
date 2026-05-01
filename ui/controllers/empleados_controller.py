@@ -135,6 +135,15 @@ class EmpleadosController:
         return self._catalogo.list_cargos(solo_activos=solo_activos)
 
     @require_permission(perms.MANAGE_EMPLOYEES)
+    def list_cargos_para_departamento(self, departamento_id: int) -> List[Cargo]:
+        """Sub-3.2.A: cargos elegibles para un depto (globales + específicos).
+
+        Pensado para refrescar el dropdown del formulario de empleado al
+        cambiar el departamento.
+        """
+        return self._catalogo.list_cargos_para_departamento(departamento_id)
+
+    @require_permission(perms.MANAGE_EMPLOYEES)
     def list_turnos(self, solo_activos: bool = True) -> List[Turno]:
         """Devuelve turnos (activos por default). Ver ``list_departamentos``."""
         return self._turno.list_turnos(solo_activos=solo_activos)

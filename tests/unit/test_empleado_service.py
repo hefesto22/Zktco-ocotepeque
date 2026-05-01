@@ -46,7 +46,7 @@ from core.services.errors import (
     SinTurnoVigenteError,
     TurnoInactiveError,
     TurnoNotFoundError,
-    TurnoYaAsignadoError,
+    TurnoBitmaskSolapadoError,
 )
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
@@ -473,15 +473,66 @@ def test_asignar_turno_ok(
     assert _count_audit(db, "turno_asignado") == 1
 
 
-def test_asignar_turno_con_vigente_falla(
+def test_asignar_segundo_turno_con_bitmask_solapado_falla(
     setup: Tuple[EmpleadoService, Database, int, int, int, int],
 ) -> None:
+    """Sub-3.2.B: dos turnos con bitmasks que se solapan no pueden coexistir.
+
+    En el setup ambos turnos usan DIAS_LABORALES (lun-vie), así que la
+    intersección no es vacía y la asignación del segundo se rechaza con
+    ``TurnoBitmaskSolapadoError``.
+    """
     service, _, dep_id, cargo_id, turno_a, turno_b = setup
     emp = service.create_empleado(DNI_VALIDO, "A", "B", dep_id, cargo_id, "2024-01-01", ACTOR_ID)
     assert emp.id is not None
     service.asignar_turno(emp.id, turno_a, "2024-01-15", ACTOR_ID)
-    with pytest.raises(TurnoYaAsignadoError):
+    with pytest.raises(TurnoBitmaskSolapadoError):
         service.asignar_turno(emp.id, turno_b, "2024-02-01", ACTOR_ID)
+
+
+def test_asignar_segundo_turno_con_bitmask_disjunto_ok(
+    setup: Tuple[EmpleadoService, Database, int, int, int, int],
+) -> None:
+    """Sub-3.2.B: dos turnos con bitmasks disjuntos coexisten como vigentes.
+
+    El caso real: lun-vie 8-17 + sábado 8-13. Ambas asignaciones quedan
+    abiertas (``fecha_fin IS NULL``) y la consolidación elige cuál
+    aplica según el día de la semana.
+    """
+    from core.models.turno import DIAS_LABORALES, SABADO, Turno
+    from core.repositories.turno_repository_sqlite import TurnoRepositorySQLite
+
+    service, db, dep_id, cargo_id, turno_a, _ = setup
+    # Creamos un turno solo para sábado.
+    turno_sabado = TurnoRepositorySQLite(db).create(
+        Turno(
+            id=None,
+            nombre="Sábado 08-13",
+            hora_entrada="08:00",
+            hora_salida="13:00",
+            dias_semana=SABADO,
+        )
+    )
+    assert turno_sabado.id is not None
+    # Sanity: turno_a usa DIAS_LABORALES (no incluye sábado) → disjunto.
+    assert (DIAS_LABORALES & SABADO) == 0
+
+    emp = service.create_empleado(DNI_VALIDO, "A", "B", dep_id, cargo_id, "2024-01-01", ACTOR_ID)
+    assert emp.id is not None
+    service.asignar_turno(emp.id, turno_a, "2024-01-15", ACTOR_ID)
+    # Distinta fecha_inicio para no chocar con el UNIQUE
+    # (empleado_id, fecha_inicio) de empleado_turnos.
+    service.asignar_turno(emp.id, turno_sabado.id, "2024-01-16", ACTOR_ID)
+
+    # El empleado ahora tiene 2 vigentes.
+    from core.repositories.empleado_turno_repository_sqlite import (
+        EmpleadoTurnoRepositorySQLite,
+    )
+
+    et_repo = EmpleadoTurnoRepositorySQLite(db)
+    vigentes = et_repo.list_vigentes(emp.id)
+    turno_ids = {v.turno_id for v in vigentes}
+    assert turno_ids == {turno_a, turno_sabado.id}
 
 
 def test_asignar_turno_empleado_inactivo_falla(
