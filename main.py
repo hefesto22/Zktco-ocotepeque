@@ -1,4 +1,4 @@
-"""Punto de entrada de la ZKTeco Attendance Desktop App.
+"""Punto de entrada de BioMuni — Municipalidad de Ocotepeque.
 
 Secuencia de arranque:
     1. Asegurar que las carpetas de runtime existan (data/, logs/, exports/).

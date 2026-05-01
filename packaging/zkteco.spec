@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 #
-# Spec file de PyInstaller para ZKTeco Attendance Desktop App.
+# Spec file de PyInstaller para BioMuni — Municipalidad de Ocotepeque.
 #
 # Modo de empaquetado: --onedir (aprobado en Sub-6.2). Decisión:
 #   • Compatible con antivirus institucionales (no descomprime a TEMP).

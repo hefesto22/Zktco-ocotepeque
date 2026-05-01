@@ -1,6 +1,7 @@
-# Manual de usuario — ZKTeco Attendance Desktop App
+# Manual de usuario — BioMuni
 
-**Cliente:** Municipalidad de Ocotepeque · **Proveedor:** Grupo Olympo
+**Cliente:** Municipalidad de Ocotepeque
+**Aporte académico de:** Sammy Alberto Oliva Molina — UCENM
 **Versión del manual:** 1.0 · **Fecha:** 2026-04-30
 
 Este manual está pensado para el operador que usa la aplicación día a día (alta de empleados, sincronización del reloj K40, generación de reportes) y para el administrador técnico que la mantiene (backups, recuperación de cuentas, actualizaciones).

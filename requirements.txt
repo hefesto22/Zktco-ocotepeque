@@ -1,4 +1,4 @@
-# ZKTeco Attendance Desktop App — dependencias de producción
+# BioMuni — Municipalidad de Ocotepeque · dependencias de producción
 # Estas son las únicas dependencias que van en el .exe final.
 # Para desarrollo (pytest, linters, etc.) ver requirements-dev.txt
 

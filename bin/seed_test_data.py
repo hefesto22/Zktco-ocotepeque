@@ -124,7 +124,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     print("═══════════════════════════════════════════════════════════════")
-    print("  Seed de datos de prueba — ZKTeco Attendance App")
+    print("  Seed de datos de prueba — BioMuni (Municipalidad de Ocotepeque)")
     print(f"  BD: {db_path}")
     print(f"  Actor (audit): user_id={actor_id}")
     print("═══════════════════════════════════════════════════════════════")

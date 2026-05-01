@@ -126,7 +126,7 @@ class MainFrame(ctk.CTkFrame):
         # Header del sidebar: nombre de la app.
         header = ctk.CTkLabel(
             sidebar,
-            text="ZKTeco Attendance",
+            text="BioMuni",
             font=ctk.CTkFont(size=16, weight="bold"),
             anchor="w",
         )
@@ -134,7 +134,7 @@ class MainFrame(ctk.CTkFrame):
 
         subheader = ctk.CTkLabel(
             sidebar,
-            text="Grupo Olympo",
+            text="Municipalidad de Ocotepeque",
             font=ctk.CTkFont(size=11),
             text_color=("gray30", "gray70"),
             anchor="w",

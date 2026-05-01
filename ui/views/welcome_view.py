@@ -25,7 +25,7 @@ Diseño visual (aprox 720x520 px contenido):
     │                                                                    │
     │  💡 Tip: ...                                                        │
     │                                                                    │
-    │                                          v0.1.0 · Grupo Olympo     │
+    │                              v0.1.0 · Municipalidad de Ocotepeque  │
     └───────────────────────────────────────────────────────────────────┘
 
 La vista NO ejecuta queries por sí misma — recibe un ``ResumenSistema``
@@ -194,7 +194,7 @@ class WelcomeView(ctk.CTkFrame):
     def _render_footer(self, version: str) -> None:
         ctk.CTkLabel(
             self,
-            text=f"v{version}  ·  Grupo Olympo",
+            text=f"v{version}  ·  Municipalidad de Ocotepeque",
             font=ctk.CTkFont(size=11),
             text_color=("gray45", "gray55"),
             anchor="e",

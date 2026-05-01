@@ -87,7 +87,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 3
 
     print("═══════════════════════════════════════════════════════════════")
-    print("  Recuperación de SUPERADMIN — ZKTeco Attendance App")
+    print("  Recuperación de SUPERADMIN — BioMuni")
     print(f"  BD: {db_path}")
     print(f"  Usuario: {superadmin.username}  (id={superadmin.id})")
     print("═══════════════════════════════════════════════════════════════")

@@ -7,8 +7,9 @@
 # pestaña "Detalles" del ejecutable en Windows.
 #
 # Mantenemos los valores en sincronía manual con ``config.py``:
-#     APP_NAME    = "ZKTeco Attendance Desktop App"
-#     APP_VENDOR  = "Grupo Olympo"
+#     APP_NAME    = "BioMuni"
+#     APP_VENDOR  = "Municipalidad de Ocotepeque"
+#     APP_AUTHOR  = "Sammy Alberto Oliva Molina — UCENM"
 #     APP_VERSION = "0.1.0"   →   (0, 1, 0, 0) en formato Windows (4 enteros)
 #
 # Locale: 0x480A = Spanish (Honduras). Codepage: 1200 = UTF-16LE (Unicode).
@@ -46,20 +47,19 @@ VSVersionInfo(
                 StringTable(
                     "480A04B0",  # Spanish (Honduras) + Unicode
                     [
-                        StringStruct("CompanyName", "Grupo Olympo"),
+                        StringStruct("CompanyName", "Municipalidad de Ocotepeque"),
                         StringStruct(
-                            "FileDescription", "ZKTeco Attendance Desktop App"
+                            "FileDescription",
+                            "BioMuni — Sistema de Asistencia Biométrica",
                         ),
                         StringStruct("FileVersion", "0.1.0.0"),
-                        StringStruct("InternalName", "zkteco"),
+                        StringStruct("InternalName", "biomuni"),
                         StringStruct(
                             "LegalCopyright",
-                            "Copyright (c) 2026 Grupo Olympo. Todos los derechos reservados.",
+                            "Copyright (c) 2026 Sammy Alberto Oliva Molina — UCENM. Todos los derechos reservados.",
                         ),
                         StringStruct("OriginalFilename", "zkteco.exe"),
-                        StringStruct(
-                            "ProductName", "ZKTeco Attendance Desktop App"
-                        ),
+                        StringStruct("ProductName", "BioMuni"),
                         StringStruct("ProductVersion", "0.1.0.0"),
                     ],
                 )

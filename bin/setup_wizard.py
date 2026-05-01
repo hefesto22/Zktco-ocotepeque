@@ -58,7 +58,7 @@ def main() -> int:
         return 0
 
     print("═══════════════════════════════════════════════════════════════")
-    print("  Asistente de configuración inicial — ZKTeco Attendance App")
+    print("  Asistente de configuración inicial — BioMuni")
     print("  Se creará el único SUPERADMIN del sistema.")
     print("═══════════════════════════════════════════════════════════════")
 

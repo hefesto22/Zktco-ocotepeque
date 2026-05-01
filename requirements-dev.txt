@@ -1,4 +1,4 @@
-# ZKTeco Attendance Desktop App — dependencias de desarrollo
+# BioMuni — Municipalidad de Ocotepeque · dependencias de desarrollo
 # Incluye TODO lo de producción + herramientas de dev (testing, linters, hooks).
 # NO se incluyen en el .exe final.
 #

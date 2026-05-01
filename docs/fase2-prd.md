@@ -1,8 +1,8 @@
 # PRD — Fase 2: CRUD de Empleados, Turnos y Catálogos
 
-**Proyecto:** ZKTeco Attendance Desktop App
-**Cliente:** Grupo Olympo — Municipalidad de Ocotepeque
-**Autor:** Mauricio Cruz (con asistencia del agente de desarrollo)
+**Proyecto:** BioMuni — Sistema de Asistencia Biométrica
+**Cliente:** Municipalidad de Ocotepeque
+**Aporte académico de:** Sammy Alberto Oliva Molina — UCENM
 **Fecha de cierre del PRD:** 2026-04-22
 **Estado:** Aprobado — listo para implementación
 **Fase anterior:** Fase 1 (Autenticación y Control de Acceso) — cerrada en commit `b88b27e`

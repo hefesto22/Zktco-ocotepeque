@@ -1,9 +1,10 @@
-# BUILD — ZKTeco Attendance Desktop App
+# BUILD — BioMuni (Municipalidad de Ocotepeque)
 
 Guía paso a paso para compilar `zkteco.exe` portable en Windows.
 
-> **Audiencia**: dev/IT de Grupo Olympo que necesita producir un binario
-> redistribuible para la Municipalidad de Ocotepeque.
+> **Audiencia**: dev/IT responsable de producir un binario redistribuible
+> para la Municipalidad de Ocotepeque.
+> **Aporte académico de**: Sammy Alberto Oliva Molina — UCENM.
 > **Plataforma de compilación**: Windows 10 1803+ o Windows 11 (64-bit).
 > **Output**: `dist\zkteco-portable-v0.1.0.zip` (~70–90 MB) listo para
 > descomprimir y correr en cualquier PC Windows objetivo.
@@ -97,9 +98,9 @@ Antes de distribuir, validar manualmente:
    sin mostrar consola CMD adicional (por `--windowed`).
 2. Clic derecho sobre `zkteco.exe` → **Propiedades** → pestaña **Detalles**.
    Debe mostrar:
-   - **Descripción del archivo**: ZKTeco Attendance Desktop App
+   - **Descripción del archivo**: BioMuni — Sistema de Asistencia Biométrica
    - **Versión del producto**: 0.1.0.0
-   - **Empresa**: Grupo Olympo
+   - **Empresa**: Municipalidad de Ocotepeque
 3. En el primer arranque, verificar que se cree `data\zkteco_app.db` junto
    al `.exe` (modo portable de Sub-6.1).
 4. Pasar el `.zip` por VirusTotal (https://www.virustotal.com/) para
@@ -245,4 +246,4 @@ Reportar fallas de build con:
 - Log completo de la consola (PowerShell o CMD).
 - Hash del commit que se intentó compilar (`git rev-parse HEAD`).
 
-Contacto: Mauricio Cruz / Grupo Olympo.
+Contacto: Sammy Alberto Oliva Molina (UCENM).

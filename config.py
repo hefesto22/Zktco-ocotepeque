@@ -17,8 +17,11 @@ from pathlib import Path
 from infrastructure import paths
 
 # ── Identidad de la aplicación ────────────────────────────────────────────────
-APP_NAME: str = "ZKTeco Attendance Desktop App"
-APP_VENDOR: str = "Grupo Olympo"
+# Branding: producto = BioMuni, dueño operativo = Municipalidad de Ocotepeque,
+# autor visible = Sammy Alberto Oliva Molina (UCENM, práctica profesional).
+APP_NAME: str = "BioMuni"
+APP_VENDOR: str = "Municipalidad de Ocotepeque"
+APP_AUTHOR: str = "Sammy Alberto Oliva Molina — UCENM"
 APP_VERSION: str = "0.1.0"  # pre-alpha, en desarrollo
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
