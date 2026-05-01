@@ -11,7 +11,7 @@ Wrapper delgado del UsuarioAdminService — usamos stubs manuales
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import pytest
 
@@ -363,7 +363,7 @@ def test_list_roles_asignables_superadmin_ve_todos() -> None:
         ("unlock_usuario", (1,)),
     ],
 )
-def test_sin_permiso_lanza_permission_denied(method: str, args: tuple) -> None:
+def test_sin_permiso_lanza_permission_denied(method: str, args: Tuple[Any, ...]) -> None:
     ctrl, stub, _ = _controller(set())  # sin MANAGE_USERS
     with pytest.raises(PermissionDeniedError):
         getattr(ctrl, method)(*args)

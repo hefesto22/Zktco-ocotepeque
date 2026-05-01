@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Optional
 
 import pytest
 
@@ -52,7 +52,7 @@ def _crear_db_con_superadmin(
     tmp_path: Path,
     *,
     failed_attempts: int = 0,
-    locked_until: str = None,
+    locked_until: Optional[str] = None,
 ) -> Path:
     """Crea una BD con un SUPERADMIN sembrado y devuelve su ruta."""
     db_path = tmp_path / "zkteco_app.db"
@@ -92,7 +92,10 @@ def _stub_inputs(
     """Cablea ``input``, ``getpass.getpass`` y el hasher real → fake."""
     pwd_iter: Iterator[str] = iter(passwords)
     monkeypatch.setattr("builtins.input", lambda _prompt="": confirmacion)
-    monkeypatch.setattr(recovery.getpass, "getpass", lambda _prompt="": next(pwd_iter))
+    monkeypatch.setattr(
+        "bin.recover_superadmin.getpass.getpass",
+        lambda _prompt="": next(pwd_iter),
+    )
     monkeypatch.setattr(recovery, "BcryptHasher", lambda _cost: _FakeHasher())
 
 

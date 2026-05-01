@@ -167,10 +167,9 @@ def test_create_dispositivo_puerto_bool_rechazado(
     """``True``/``False`` son ``int`` en Python — rechazar explícito."""
     service, _ = setup
     with pytest.raises(InvalidPuertoError):
-        # type: ignore[arg-type] — testing que bool no cuela como puerto.
-        service.create_dispositivo(
-            "Reloj", "192.168.0.101", True, ACTOR_ID  # type: ignore[arg-type]
-        )
+        # Pasar ``True`` (que es ``int`` en Python) debe ser rechazado en runtime
+        # por la validación explícita ``isinstance(puerto, bool)`` del servicio.
+        service.create_dispositivo("Reloj", "192.168.0.101", True, ACTOR_ID)
 
 
 # ── Create — duplicados ───────────────────────────────────────────────────────
