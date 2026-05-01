@@ -3,10 +3,11 @@
 Smoke test: corre el script contra una BD recién migrada con un único
 usuario activo y verifica que:
 
-    - Se crean los catálogos esperados (depto TEST, cargo TEST, turno
-      Diurno 08-17).
+    - Se crean los catálogos esperados (depto TEST, cargo TEST global,
+      turno "Diurno L-V 08-17" y turno "Sabatino 08-13").
     - Se crean los 21 empleados con DNIs únicos.
-    - A todos se les asigna el turno Diurno 08-17 desde 2026-05-01.
+    - A todos se les asignan AMBOS turnos paralelos (Lun-Vie + Sábado)
+      desde 2026-05-01 — días disjuntos, vigentes en simultáneo.
     - El script es idempotente (correrlo dos veces no rompe ni duplica).
 
 NO valida la correctitud humana de los datos (nombres, DNIs específicos),
@@ -56,8 +57,8 @@ def _crear_db_con_usuario(tmp_path: Path) -> Path:
     return db_path
 
 
-def test_seed_crea_los_21_empleados_con_turno_asignado(tmp_path: Path) -> None:
-    """End-to-end: una BD limpia → 21 empleados con turno Diurno 08-17."""
+def test_seed_crea_los_21_empleados_con_dos_turnos_vigentes(tmp_path: Path) -> None:
+    """End-to-end: una BD limpia → 21 empleados con L-V + Sábado vigentes."""
     db_path = _crear_db_con_usuario(tmp_path)
 
     exit_code = seed.main(["--db-path", str(db_path)])
@@ -69,12 +70,15 @@ def test_seed_crea_los_21_empleados_con_turno_asignado(tmp_path: Path) -> None:
     dnis = {emp.dni for emp in empleados}
     assert len(dnis) == 21, "Los DNIs deben ser únicos"
 
-    # Cada empleado debe tener una asignación de turno vigente.
+    # Cada empleado debe tener LOS DOS turnos paralelos asignados.
     et_repo = EmpleadoTurnoRepositorySQLite(database)
     for emp in empleados:
         assert emp.id is not None
         vigentes = et_repo.list_vigentes(emp.id)
-        assert len(vigentes) >= 1, f"Empleado id={emp.id} sin turno vigente"
+        assert len(vigentes) == 2, (
+            f"Empleado id={emp.id} debería tener 2 turnos vigentes "
+            f"(L-V + Sábado), tiene {len(vigentes)}."
+        )
 
 
 def test_seed_es_idempotente(tmp_path: Path) -> None:

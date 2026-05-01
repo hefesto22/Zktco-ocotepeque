@@ -18,9 +18,15 @@ Uso::
 
 Catálogos que crea (si no existen ya):
 
-    - Departamento "TEST"   (placeholder hasta que se creen los reales)
-    - Cargo "TEST"           (placeholder hasta que se creen los reales)
-    - Turno "Diurno 08-17"   (Lun-Vie, 08:00-17:00, 60min descanso)
+    - Departamento "TEST"        (placeholder hasta que se creen los reales)
+    - Cargo "TEST" GLOBAL        (sin departamento_id — válido para cualquier
+                                  depto, así no falla la validación cruzada)
+    - Turno "Diurno L-V 08-17"   (Lun-Vie, 08:00-17:00, 60min descanso)
+    - Turno "Sabatino 08-13"     (Sábado, 08:00-13:00, sin descanso)
+
+A cada empleado se le asignan AMBOS turnos en paralelo (días disjuntos),
+así trabajan jornada regular de lunes a viernes y jornada corta el sábado
+sin necesidad de configurar nada extra desde la UI.
 
 Empleados sembrados: ver ``_EMPLEADOS_MUNI`` abajo. Los ``zkteco_id``
 quedan en ``NULL`` hasta que la muni enrole en el reloj. La fecha de
@@ -39,6 +45,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -65,18 +72,47 @@ from core.services.errors import (
     TurnoYaAsignadoError,
 )
 from core.services.turno_service import TurnoService
-from core.models.turno import DIAS_LABORALES
+from core.models.turno import DIAS_LABORALES, SABADO
 from infrastructure.database.connection import Database
 from infrastructure.database.migrations_runner import MigrationsRunner
 
 # ── Catálogos ────────────────────────────────────────────────────────────────
 _DEPARTAMENTO_PLACEHOLDER = "TEST"
 _CARGO_PLACEHOLDER = "TEST"
-_TURNO_NOMBRE = "Diurno 08-17"
-_TURNO_HORA_ENTRADA = "08:00"
-_TURNO_HORA_SALIDA = "17:00"
-_TURNO_DESCANSO_MIN = 60
-_TURNO_DIAS = DIAS_LABORALES  # bitmask Lun-Vie
+
+# Dos turnos paralelos por empleado (turnos múltiples, gracias al Sub-3.2.B):
+#   - L-V 08:00-17:00 con 60min de descanso para el almuerzo.
+#   - Sábado 08:00-13:00, jornada corta sin descanso.
+# Los días de la semana son disjuntos (DIAS_LABORALES = Lun-Vie, SABADO solo
+# sábado), así que el ``EmpleadoService`` los acepta como vigentes en paralelo.
+
+
+@dataclass(frozen=True)
+class _TurnoSpec:
+    """Definición tipada de un turno a sembrar — evita ``dict`` heterogéneo."""
+
+    nombre: str
+    hora_entrada: str
+    hora_salida: str
+    minutos_descanso: int
+    dias_semana: int
+
+
+_TURNO_LV = _TurnoSpec(
+    nombre="Diurno L-V 08-17",
+    hora_entrada="08:00",
+    hora_salida="17:00",
+    minutos_descanso=60,
+    dias_semana=DIAS_LABORALES,
+)
+_TURNO_SABATINO = _TurnoSpec(
+    nombre="Sabatino 08-13",
+    hora_entrada="08:00",
+    hora_salida="13:00",
+    minutos_descanso=0,
+    dias_semana=SABADO,
+)
+_TURNOS_A_SEMBRAR = (_TURNO_LV, _TURNO_SABATINO)
 _FECHA_INGRESO = "2026-05-01"
 
 # ── Empleados reales de la muni ──────────────────────────────────────────────
@@ -154,7 +190,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     departamento_id = _ensure_departamento(catalogo_svc, actor_id, creados)
     cargo_id = _ensure_cargo(catalogo_svc, actor_id, creados)
-    turno_id = _ensure_turno(turno_svc, actor_id, creados)
+    turno_ids = _ensure_turnos(turno_svc, actor_id, creados)
 
     for dni, nombres, apellidos in _EMPLEADOS_MUNI:
         emp_id = _ensure_empleado(
@@ -167,7 +203,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             actor_id=actor_id,
             creados=creados,
         )
-        if emp_id is not None:
+        if emp_id is None:
+            continue
+        for turno_id in turno_ids:
             _ensure_asignacion_turno(
                 empleado_svc,
                 empleado_id=emp_id,
@@ -185,9 +223,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"    · Empleados creados:     {creados['empleado']}")
     print(f"    · Asignaciones de turno: {creados['asignacion_turno']}")
     print("───────────────────────────────────────────────────────────────")
-    print("  Listo. Los empleados quedan con depto/cargo TEST y turno")
-    print("  Diurno 08-17 — la muni los reasigna desde la UI cuando")
-    print("  enrole las huellas en el reloj K40.")
+    print("  Listo. Los empleados quedan con depto/cargo TEST y los turnos")
+    print('  paralelos "Diurno L-V 08-17" + "Sabatino 08-13" — la muni')
+    print("  los reasigna desde la UI cuando enrole las huellas en el K40.")
     return 0
 
 
@@ -296,13 +334,28 @@ def _ensure_departamento(
 
 
 def _ensure_cargo(catalogo_svc: CatalogoService, actor_id: int, creados: dict[str, int]) -> int:
-    """Crea el cargo placeholder si no existe; devuelve su id."""
+    """Crea el cargo placeholder GLOBAL si no existe; devuelve su id.
+
+    Crea el cargo con ``departamento_id=None`` para que sea aplicable a
+    cualquier departamento — esencial mientras la muni no haya definido
+    sus cargos reales por departamento. Si el cargo ya existe con un
+    departamento_id distinto, levanta error claro en vez de continuar
+    silenciosamente y romper más adelante en ``create_empleado``.
+    """
     for cargo in catalogo_svc.list_cargos(solo_activos=False):
         if cargo.nombre == _CARGO_PLACEHOLDER and cargo.id is not None:
-            print(f'• Cargo "{_CARGO_PLACEHOLDER}" ya existe (id={cargo.id}).')
+            if cargo.departamento_id is not None:
+                raise RuntimeError(
+                    f'El cargo "{_CARGO_PLACEHOLDER}" (id={cargo.id}) está '
+                    f"ligado al departamento_id={cargo.departamento_id}, "
+                    f"pero el seed lo necesita global. Borrá la BD o "
+                    f"convertí el cargo a global desde la UI antes de "
+                    f"correr este script."
+                )
+            print(f'• Cargo "{_CARGO_PLACEHOLDER}" ya existe (id={cargo.id}, global).')
             return cargo.id
     try:
-        creado = catalogo_svc.create_cargo(_CARGO_PLACEHOLDER, actor_id)
+        creado = catalogo_svc.create_cargo(_CARGO_PLACEHOLDER, actor_id, departamento_id=None)
     except DuplicateNombreError:
         for cargo in catalogo_svc.list_cargos(solo_activos=False):
             if cargo.nombre == _CARGO_PLACEHOLDER and cargo.id is not None:
@@ -310,34 +363,51 @@ def _ensure_cargo(catalogo_svc: CatalogoService, actor_id: int, creados: dict[st
         raise
     assert creado.id is not None
     creados["cargo"] += 1
-    print(f'✓ Cargo "{_CARGO_PLACEHOLDER}" creado (id={creado.id}).')
+    print(f'✓ Cargo "{_CARGO_PLACEHOLDER}" creado (id={creado.id}, global).')
     return creado.id
 
 
-def _ensure_turno(turno_svc: TurnoService, actor_id: int, creados: dict[str, int]) -> int:
-    """Crea el turno Diurno 08-17 si no existe; devuelve su id."""
-    for turno in turno_svc.list_turnos(solo_activos=False):
-        if turno.nombre == _TURNO_NOMBRE and turno.id is not None:
-            print(f'• Turno "{_TURNO_NOMBRE}" ya existe (id={turno.id}).')
-            return turno.id
-    try:
-        creado = turno_svc.create_turno(
-            nombre=_TURNO_NOMBRE,
-            hora_entrada=_TURNO_HORA_ENTRADA,
-            hora_salida=_TURNO_HORA_SALIDA,
-            minutos_descanso=_TURNO_DESCANSO_MIN,
-            dias_semana=_TURNO_DIAS,
-            actor_user_id=actor_id,
-        )
-    except DuplicateTurnoNombreError:
-        for turno in turno_svc.list_turnos(solo_activos=False):
-            if turno.nombre == _TURNO_NOMBRE and turno.id is not None:
-                return turno.id
-        raise
-    assert creado.id is not None
-    creados["turno"] += 1
-    print(f'✓ Turno "{_TURNO_NOMBRE}" creado (id={creado.id}).')
-    return creado.id
+def _ensure_turnos(turno_svc: TurnoService, actor_id: int, creados: dict[str, int]) -> list[int]:
+    """Crea los turnos paralelos (L-V + Sabatino) si no existen.
+
+    Devuelve los ids en el orden de ``_TURNOS_A_SEMBRAR`` para que el
+    main pueda iterar y asignar todos los turnos a cada empleado.
+    """
+    ids: list[int] = []
+    existentes = {
+        turno.nombre: turno.id
+        for turno in turno_svc.list_turnos(solo_activos=False)
+        if turno.id is not None
+    }
+
+    for spec in _TURNOS_A_SEMBRAR:
+        if spec.nombre in existentes:
+            print(f'• Turno "{spec.nombre}" ya existe (id={existentes[spec.nombre]}).')
+            ids.append(existentes[spec.nombre])
+            continue
+        try:
+            creado = turno_svc.create_turno(
+                nombre=spec.nombre,
+                hora_entrada=spec.hora_entrada,
+                hora_salida=spec.hora_salida,
+                minutos_descanso=spec.minutos_descanso,
+                dias_semana=spec.dias_semana,
+                actor_user_id=actor_id,
+            )
+        except DuplicateTurnoNombreError:
+            # Race extremadamente improbable; releemos.
+            refrescados = {
+                turno.nombre: turno.id
+                for turno in turno_svc.list_turnos(solo_activos=False)
+                if turno.id is not None
+            }
+            ids.append(refrescados[spec.nombre])
+            continue
+        assert creado.id is not None
+        creados["turno"] += 1
+        print(f'✓ Turno "{spec.nombre}" creado (id={creado.id}).')
+        ids.append(creado.id)
+    return ids
 
 
 def _ensure_empleado(
@@ -391,10 +461,16 @@ def _ensure_asignacion_turno(
     actor_id: int,
     creados: dict[str, int],
 ) -> None:
-    """Asigna el turno al empleado si aún no tiene uno vigente."""
-    vigente = empleado_svc.get_turno_vigente(empleado_id)
-    if vigente is not None:
-        print(f"  · Empleado id={empleado_id} ya tiene turno vigente " f"(id={vigente.turno_id}).")
+    """Asigna ESTE turno al empleado si aún no lo tiene vigente.
+
+    Multi-turnos (Sub-3.2.B): un empleado puede tener varias asignaciones
+    vigentes en paralelo siempre que los días de la semana sean disjuntos.
+    Por eso comparamos contra ``list_turnos_vigentes`` (todas las vigentes)
+    en vez de ``get_turno_vigente`` (que devuelve solo la primera).
+    """
+    vigentes = empleado_svc.list_turnos_vigentes(empleado_id)
+    if any(v.turno_id == turno_id for v in vigentes):
+        print(f"  · Empleado id={empleado_id} ya tiene el turno_id={turno_id} vigente.")
         return
     try:
         empleado_svc.asignar_turno(
@@ -406,7 +482,9 @@ def _ensure_asignacion_turno(
     except TurnoYaAsignadoError:
         return
     creados["asignacion_turno"] += 1
-    print(f"  · Turno asignado a empleado id={empleado_id} desde {_FECHA_INGRESO}.")
+    print(
+        f"  · Turno_id={turno_id} asignado a empleado id={empleado_id} " f"desde {_FECHA_INGRESO}."
+    )
 
 
 if __name__ == "__main__":
