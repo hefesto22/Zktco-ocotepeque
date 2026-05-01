@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
+from ui.components.cargos_tab import CargosTab
 from ui.components.catalogo_tab import CatalogoTab
 from ui.components.dispositivos_tab import DispositivosTab
 from ui.controllers.configuracion_controller import ConfiguracionController
@@ -71,12 +72,15 @@ class ConfiguracionView(ctk.CTkFrame):
             unarchive_fn=self._controller.unarchive_departamento,
         ).pack(expand=True, fill="both")
 
-        CatalogoTab(
+        # Sub-3.2.A: el tab Cargos usa un componente específico que
+        # soporta el dropdown de "Aplica a departamento" en alta/edición.
+        CargosTab(
             tab_cargos,
-            title_singular="Cargo",
-            list_fn=self._controller.list_cargos,
+            list_cargos_fn=self._controller.list_cargos,
+            list_departamentos_fn=self._controller.list_departamentos,
             create_fn=self._controller.create_cargo,
             rename_fn=self._controller.rename_cargo,
+            set_departamento_fn=self._controller.set_cargo_departamento,
             archive_fn=self._controller.archive_cargo,
             unarchive_fn=self._controller.unarchive_cargo,
         ).pack(expand=True, fill="both")
